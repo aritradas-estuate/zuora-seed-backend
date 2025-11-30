@@ -1,2 +1,5 @@
 GEMINI.md
 __pycache__/
+.env
+*.env.local
+.venv/
