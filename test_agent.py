@@ -362,6 +362,154 @@ def test_chat_api_basic():
 
 
 # =============================================================================
+# ZUORA API VIEW/UPDATE TESTS
+# =============================================================================
+
+def test_zuora_connect():
+    """Test: Connect to Zuora sandbox."""
+    print("\n" + "=" * 60)
+    print("ZUORA API: Connect to Sandbox")
+    print("=" * 60)
+
+    request = {
+        "persona": "ProjectManager",
+        "message": "Connect me to our Zuora sandbox for write operations and confirm OAuth is active.",
+        "conversation_id": "zuora-connect-001"
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_zuora_view_all_products():
+    """Test: View all products in catalog."""
+    print("\n" + "=" * 60)
+    print("ZUORA API: View All Products")
+    print("=" * 60)
+
+    request = {
+        "persona": "ProjectManager",
+        "message": "Show me all products in the catalog.",
+        "conversation_id": "zuora-view-all-001"
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_zuora_view_specific_product():
+    """Test: View a specific product by name."""
+    print("\n" + "=" * 60)
+    print("ZUORA API: View Specific Product")
+    print("=" * 60)
+
+    request = {
+        "persona": "ProjectManager",
+        "message": "I want to view details of a specific product. The product name is 'Solar Plan Premium'.",
+        "conversation_id": "zuora-view-specific-001"
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_zuora_view_rate_plans():
+    """Test: View rate plans for a product."""
+    print("\n" + "=" * 60)
+    print("ZUORA API: View Rate Plans")
+    print("=" * 60)
+
+    request = {
+        "persona": "ProjectManager",
+        "message": "Show me the rate plans and charges for 'Solar Plan Premium'.",
+        "conversation_id": "zuora-view-rp-001"
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_zuora_update_product_name():
+    """Test: Update product name workflow."""
+    print("\n" + "=" * 60)
+    print("ZUORA API: Update Product Name")
+    print("=" * 60)
+
+    request = {
+        "persona": "ProjectManager",
+        "message": "I want to update the product 'Solar Plan Basic'. Change the name to 'Solar Plan Premium'.",
+        "conversation_id": "zuora-update-name-001"
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_zuora_update_product_date():
+    """Test: Update product end date."""
+    print("\n" + "=" * 60)
+    print("ZUORA API: Update Product End Date")
+    print("=" * 60)
+
+    request = {
+        "persona": "ProjectManager",
+        "message": "Update the end date of 'Solar Plan Basic' to 2027-12-31.",
+        "conversation_id": "zuora-update-date-001"
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_zuora_update_charge_price():
+    """Test: Update charge price."""
+    print("\n" + "=" * 60)
+    print("ZUORA API: Update Charge Price")
+    print("=" * 60)
+
+    request = {
+        "persona": "ProjectManager",
+        "message": "I need to update the 'Base Charge' price from $1,200 to $1,350 per year.",
+        "conversation_id": "zuora-update-price-001"
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_zuora_update_charge_model_restricted():
+    """Test: Attempt to update charge model (should be restricted)."""
+    print("\n" + "=" * 60)
+    print("ZUORA API: Update Charge Model (Restricted)")
+    print("=" * 60)
+
+    request = {
+        "persona": "ProjectManager",
+        "message": "I want to change the charge model from Flat Fee Pricing to Tiered Pricing.",
+        "conversation_id": "zuora-update-model-001"
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+# =============================================================================
 # TEST MENU
 # =============================================================================
 
@@ -384,11 +532,25 @@ PM_TESTS = {
     "16": ("Legacy: Basic Chat API", test_chat_api_basic),
 }
 
+ZUORA_API_TESTS = {
+    "z1": ("Connect to Zuora", test_zuora_connect),
+    "z2": ("View All Products", test_zuora_view_all_products),
+    "z3": ("View Specific Product", test_zuora_view_specific_product),
+    "z4": ("View Rate Plans", test_zuora_view_rate_plans),
+    "z5": ("Update Product Name", test_zuora_update_product_name),
+    "z6": ("Update Product Date", test_zuora_update_product_date),
+    "z7": ("Update Charge Price", test_zuora_update_charge_price),
+    "z8": ("Update Charge Model (Restricted)", test_zuora_update_charge_model_restricted),
+}
+
+
+ALL_TESTS = {**PM_TESTS, **ZUORA_API_TESTS}
+
 
 def show_menu():
     """Display test menu."""
     print("\n" + "=" * 60)
-    print("ZUORA SEED - PRODUCT MANAGER TEST MENU")
+    print("ZUORA SEED - TEST MENU")
     print("=" * 60)
     print("\nPricing Model Tests:")
     for key in ["1", "2", "3", "4", "5", "6", "7"]:
@@ -399,7 +561,11 @@ def show_menu():
     print("\nLegacy Tests:")
     for key in ["15", "16"]:
         print(f"  {key}. {PM_TESTS[key][0]}")
-    print("\n  a. Run ALL tests")
+    print("\n--- ZUORA API TESTS (Real API) ---")
+    for key in ["z1", "z2", "z3", "z4", "z5", "z6", "z7", "z8"]:
+        print(f"  {key}. {ZUORA_API_TESTS[key][0]}")
+    print("\n  a. Run ALL PM tests")
+    print("  z. Run ALL Zuora API tests")
     print("  q. Quit")
     print("-" * 60)
 
@@ -408,17 +574,21 @@ def run_interactive():
     """Run tests interactively."""
     while True:
         show_menu()
-        choice = input("\nSelect test (1-16, a, or q): ").strip().lower()
+        choice = input("\nSelect test (1-16, z1-z8, a, z, or q): ").strip().lower()
 
         if choice == 'q':
             print("Goodbye!")
             break
         elif choice == 'a':
-            print("\nRunning ALL tests...")
+            print("\nRunning ALL PM tests...")
             for key, (name, func) in PM_TESTS.items():
                 func()
-        elif choice in PM_TESTS:
-            PM_TESTS[choice][1]()
+        elif choice == 'z':
+            print("\nRunning ALL Zuora API tests...")
+            for key, (name, func) in ZUORA_API_TESTS.items():
+                func()
+        elif choice in ALL_TESTS:
+            ALL_TESTS[choice][1]()
         else:
             print("Invalid choice. Please try again.")
 
@@ -429,14 +599,17 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         # Run specific test by number
         test_num = sys.argv[1]
-        if test_num in PM_TESTS:
-            PM_TESTS[test_num][1]()
-        elif test_num == "all":
+        if test_num in ALL_TESTS:
+            ALL_TESTS[test_num][1]()
+        elif test_num == "all" or test_num == "a":
             for key, (name, func) in PM_TESTS.items():
+                func()
+        elif test_num == "z":
+            for key, (name, func) in ZUORA_API_TESTS.items():
                 func()
         else:
             print(f"Unknown test: {test_num}")
-            print(f"Available: {', '.join(PM_TESTS.keys())}, all")
+            print(f"Available: {', '.join(ALL_TESTS.keys())}, a (all PM), z (all Zuora)")
     else:
         # Interactive menu
         run_interactive()
