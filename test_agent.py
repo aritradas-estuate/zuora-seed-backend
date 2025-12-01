@@ -510,8 +510,284 @@ def test_zuora_update_charge_model_restricted():
 
 
 # =============================================================================
+# BILLING ARCHITECT TEST SCENARIOS
+# =============================================================================
+
+def test_ba_prepaid_drawdown_setup():
+    """BA Test: Configure Prepaid with Drawdown for API credits."""
+    print("\n" + "=" * 60)
+    print("BA TEST: Prepaid with Drawdown Setup")
+    print("=" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": """Help me configure a Prepaid with Drawdown setup for API credits:
+        - Product: API Platform
+        - Rate Plan: Enterprise Credits
+        - Prepaid: $500/month loads 100,000 API_CALL credits
+        - Auto top-up when balance falls below 20%
+        - Customer-specific top-up amounts using fieldLookup
+        - Account custom field: TopUpAmount__c
+
+        Generate all the configuration payloads and step-by-step instructions.""",
+        "conversation_id": "ba-prepaid-001"
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_ba_auto_topup_workflow():
+    """BA Test: Configure auto top-up workflow."""
+    print("\n" + "=" * 60)
+    print("BA TEST: Auto Top-Up Workflow")
+    print("=" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": """Create a workflow configuration for auto top-up:
+        - Trigger: When prepaid balance falls below 20%
+        - Action: Create order to add more prepaid credits
+        - Use the customer's TopUpAmount__c field for the amount
+        - Send notification when top-up is triggered
+
+        Provide the complete workflow configuration and notification rule.""",
+        "conversation_id": "ba-topup-001"
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_ba_usage_notification():
+    """BA Test: Configure usage event notification."""
+    print("\n" + "=" * 60)
+    print("BA TEST: Usage Record Notification")
+    print("=" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": """Set up a notification rule for usage record creation:
+        - Event: Usage Record Creation
+        - Channel: Webhook to https://api.example.com/zuora-webhook
+        - Include: Account ID, Usage amount, UOM, timestamp
+
+        Generate the notification configuration and webhook payload format.""",
+        "conversation_id": "ba-notification-001"
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_ba_scheduled_transition():
+    """BA Test: Scheduled product transition (Pay-as-you-go to Prepaid)."""
+    print("\n" + "=" * 60)
+    print("BA TEST: Scheduled Product Transition")
+    print("=" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": """Design a scheduled transition for deposit customers:
+
+        Scenario:
+        - Customer currently on "Pay-as-you-go" rate plan
+        - Deposit amount stored in Account.DepositAmount__c
+        - On May 1st, automatically:
+          1. Remove Pay-as-you-go rate plan
+          2. Add Prepaid Drawdown rate plan
+          3. Use deposit amount for initial prepaid balance
+
+        Generate:
+        1. Account custom field definition for deposit
+        2. Scheduled workflow for May 1st
+        3. Orders API payload for the transition
+        4. Step-by-step implementation guide""",
+        "conversation_id": "ba-transition-001"
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_ba_multi_attribute_pricing():
+    """BA Test: Multi-attribute pricing with fieldLookup."""
+    print("\n" + "=" * 60)
+    print("BA TEST: Multi-Attribute Pricing")
+    print("=" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": """Configure Multi-Attribute Pricing for compute credits:
+        - Base price: $0.10 per unit
+        - Attributes:
+          * Region: US, EU, APAC
+          * Tier: Standard, Premium, Enterprise
+        - US is base price, EU +10%, APAC +20%
+        - Premium +15%, Enterprise +30%
+
+        Should we use:
+        A) Native MAP in Zuora
+        B) fieldLookup() with custom fields
+
+        Recommend the best approach and generate configuration.""",
+        "conversation_id": "ba-map-001"
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_ba_field_lookup_explanation():
+    """BA Test: Explain fieldLookup for dynamic pricing."""
+    print("\n" + "=" * 60)
+    print("BA TEST: fieldLookup() Explanation")
+    print("=" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": """The top-up amount differs for each customer. How can Zuora automatically use a customer-specific top-up value?
+
+        I need to understand how to use fieldLookup() for this scenario.""",
+        "conversation_id": "ba-fieldlookup-001"
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_ba_complete_prepaid_customer():
+    """BA Test: Complete prepaid customer setup (Use Case 1)."""
+    print("\n" + "=" * 60)
+    print("BA TEST: Complete Prepaid Customer Setup")
+    print("=" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": """Design complete billing architecture for prepaid customers:
+
+        Requirements:
+        1. Prepaid with Drawdown charge model for SMS credits
+        2. Custom top-up amounts per customer (use fieldLookup)
+        3. Minimum balance threshold triggers top-up
+        4. Notification when usage records are created
+        5. Workflow for automated top-up when balance is low
+
+        Provide:
+        - All required configurations (charges, custom fields, notifications, workflows)
+        - Complete JSON payloads for each component
+        - Implementation sequence with dependencies
+        - Validation checklist""",
+        "conversation_id": "ba-complete-prepaid-001"
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_ba_deposit_customer_workflow():
+    """BA Test: Deposit customer with scheduled transition (Use Case 2)."""
+    print("\n" + "=" * 60)
+    print("BA TEST: Deposit Customer Workflow")
+    print("=" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": """Design billing architecture for deposit customers:
+
+        Requirements:
+        1. Store deposit amount in Account custom field
+        2. Customer starts on Pay-as-you-go rate plan
+        3. Scheduled workflow executes on May 1st
+        4. Transition: Remove Pay-as-you-go, Add Prepaid Drawdown
+        5. Use deposit amount as initial prepaid balance via Orders API
+
+        Provide:
+        - Account custom field definition
+        - Workflow configuration for May 1st execution
+        - Orders API payload for rate plan transition
+        - Complete implementation guide""",
+        "conversation_id": "ba-deposit-001"
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_ba_order_transition_payload():
+    """BA Test: Generate Orders API payload for product transition."""
+    print("\n" + "=" * 60)
+    print("BA TEST: Orders API Transition Payload")
+    print("=" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": """Generate an Orders API payload to transition a customer:
+        - Remove rate plan ID: rp-paygo-12345
+        - Add rate plan ID: rp-prepaid-67890
+        - Effective date: 2024-05-01
+        - Use fieldLookup for deposit amount from Account.DepositAmount__c
+
+        Include complete payload with charge overrides.""",
+        "conversation_id": "ba-order-001"
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_ba_documentation_lookup():
+    """BA Test: Get Zuora documentation reference."""
+    print("\n" + "=" * 60)
+    print("BA TEST: Documentation Lookup")
+    print("=" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": "I need documentation and API references for Prepaid with Drawdown. What are the key concepts and endpoints?",
+        "conversation_id": "ba-docs-001"
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+# =============================================================================
 # TEST MENU
 # =============================================================================
+
+BA_TESTS = {
+    "ba1": ("Prepaid Drawdown Setup", test_ba_prepaid_drawdown_setup),
+    "ba2": ("Auto Top-Up Workflow", test_ba_auto_topup_workflow),
+    "ba3": ("Usage Notification", test_ba_usage_notification),
+    "ba4": ("Scheduled Transition", test_ba_scheduled_transition),
+    "ba5": ("Multi-Attribute Pricing", test_ba_multi_attribute_pricing),
+    "ba6": ("fieldLookup() Explanation", test_ba_field_lookup_explanation),
+    "ba7": ("Complete Prepaid Customer", test_ba_complete_prepaid_customer),
+    "ba8": ("Deposit Customer Workflow", test_ba_deposit_customer_workflow),
+    "ba9": ("Orders API Transition", test_ba_order_transition_payload),
+    "ba10": ("Documentation Lookup", test_ba_documentation_lookup),
+}
 
 PM_TESTS = {
     "1": ("Bundle - Starter Suite", test_pm_bundle_starter_suite),
@@ -544,7 +820,7 @@ ZUORA_API_TESTS = {
 }
 
 
-ALL_TESTS = {**PM_TESTS, **ZUORA_API_TESTS}
+ALL_TESTS = {**PM_TESTS, **ZUORA_API_TESTS, **BA_TESTS}
 
 
 def show_menu():
@@ -564,8 +840,12 @@ def show_menu():
     print("\n--- ZUORA API TESTS (Real API) ---")
     for key in ["z1", "z2", "z3", "z4", "z5", "z6", "z7", "z8"]:
         print(f"  {key}. {ZUORA_API_TESTS[key][0]}")
+    print("\n--- BILLING ARCHITECT TESTS (Advisory) ---")
+    for key in ["ba1", "ba2", "ba3", "ba4", "ba5", "ba6", "ba7", "ba8", "ba9", "ba10"]:
+        print(f"  {key}. {BA_TESTS[key][0]}")
     print("\n  a. Run ALL PM tests")
     print("  z. Run ALL Zuora API tests")
+    print("  b. Run ALL Billing Architect tests")
     print("  q. Quit")
     print("-" * 60)
 
@@ -574,7 +854,7 @@ def run_interactive():
     """Run tests interactively."""
     while True:
         show_menu()
-        choice = input("\nSelect test (1-16, z1-z8, a, z, or q): ").strip().lower()
+        choice = input("\nSelect test (1-16, z1-z8, ba1-ba10, a, z, b, or q): ").strip().lower()
 
         if choice == 'q':
             print("Goodbye!")
@@ -586,6 +866,10 @@ def run_interactive():
         elif choice == 'z':
             print("\nRunning ALL Zuora API tests...")
             for key, (name, func) in ZUORA_API_TESTS.items():
+                func()
+        elif choice == 'b':
+            print("\nRunning ALL Billing Architect tests...")
+            for key, (name, func) in BA_TESTS.items():
                 func()
         elif choice in ALL_TESTS:
             ALL_TESTS[choice][1]()
@@ -607,9 +891,12 @@ if __name__ == "__main__":
         elif test_num == "z":
             for key, (name, func) in ZUORA_API_TESTS.items():
                 func()
+        elif test_num == "b":
+            for key, (name, func) in BA_TESTS.items():
+                func()
         else:
             print(f"Unknown test: {test_num}")
-            print(f"Available: {', '.join(ALL_TESTS.keys())}, a (all PM), z (all Zuora)")
+            print(f"Available: {', '.join(ALL_TESTS.keys())}, a (all PM), z (all Zuora), b (all BA)")
     else:
         # Interactive menu
         run_interactive()

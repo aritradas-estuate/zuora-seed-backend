@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any, Literal
+from typing import List, Optional, Dict, Any, Literal, Union
 from enum import Enum
 
 class Tier(BaseModel):
@@ -96,3 +96,219 @@ class ChatResponse(BaseModel):
         default_factory=list,
         description="Modified/created Zuora API payloads"
     )
+
+
+# ============ Billing Architect Models ============
+
+class PersonaType(str, Enum):
+    """Available persona types."""
+    PROJECT_MANAGER = "ProjectManager"
+    BILLING_ARCHITECT = "BillingArchitect"
+
+
+class BillingArchitectApiType(str, Enum):
+    """API types for Billing Architect persona (advisory payloads)."""
+    WORKFLOW = "workflow"
+    NOTIFICATION_RULE = "notification_rule"
+    ORDER = "order"
+    ACCOUNT_CUSTOM_FIELD = "account_custom_field"
+    PREPAID_BALANCE_CONFIG = "prepaid_balance_config"
+    PRODUCT_RATE_PLAN_CHARGE = "product_rate_plan_charge"
+
+
+# ============ Workflow Models ============
+
+class WorkflowTrigger(BaseModel):
+    """Workflow trigger configuration."""
+    type: Literal["Scheduled", "Callout", "Event"]
+    schedule: Optional[str] = Field(None, description="Cron expression for scheduled triggers")
+    event_type: Optional[str] = Field(None, description="Event type for event triggers (e.g., UsageRecordCreation)")
+
+
+class WorkflowCondition(BaseModel):
+    """Workflow condition for conditional execution."""
+    field: str
+    operator: Literal["equals", "notEquals", "greaterThan", "lessThan", "contains"]
+    value: Any
+
+
+class WorkflowTask(BaseModel):
+    """Individual workflow task."""
+    name: str
+    type: Literal["API", "Condition", "Delay", "Iterate", "Custom"]
+    api_endpoint: Optional[str] = None
+    api_method: Optional[Literal["GET", "POST", "PUT", "DELETE"]] = None
+    api_payload: Optional[Dict[str, Any]] = None
+    delay_duration: Optional[str] = Field(None, description="ISO 8601 duration, e.g., P1D for 1 day")
+    condition: Optional[WorkflowCondition] = None
+
+
+class WorkflowConfig(BaseModel):
+    """Complete workflow configuration for advisory purposes."""
+    name: str
+    description: Optional[str] = None
+    trigger: WorkflowTrigger
+    tasks: List[WorkflowTask] = []
+    active: bool = True
+    timezone: str = "UTC"
+
+
+# ============ Notification Models ============
+
+class NotificationEventType(str, Enum):
+    """Zuora notification event types."""
+    USAGE_RECORD_CREATION = "UsageRecordCreation"
+    PAYMENT_SUCCESS = "PaymentSuccess"
+    PAYMENT_FAILURE = "PaymentFailure"
+    INVOICE_POSTED = "InvoicePosted"
+    SUBSCRIPTION_CREATED = "SubscriptionCreated"
+    PREPAID_BALANCE_LOW = "PrepaidBalanceLow"
+    PREPAID_BALANCE_DEPLETED = "PrepaidBalanceDepleted"
+    ACCOUNT_CREATED = "AccountCreated"
+    SUBSCRIPTION_CANCELLED = "SubscriptionCancelled"
+
+
+class NotificationChannel(BaseModel):
+    """Notification delivery channel."""
+    type: Literal["Email", "Callout", "Webhook"]
+    endpoint: Optional[str] = Field(None, description="URL for callout/webhook")
+    email_template_id: Optional[str] = None
+    recipients: Optional[List[str]] = None
+
+
+class NotificationRule(BaseModel):
+    """Notification rule configuration."""
+    name: str
+    description: Optional[str] = None
+    event_type: str = Field(..., description="Event type that triggers this notification")
+    active: bool = True
+    channels: List[NotificationChannel] = []
+    filter_conditions: Optional[Dict[str, Any]] = None
+
+
+# ============ Orders API Models ============
+
+class OrderActionType(str, Enum):
+    """Zuora Orders API action types."""
+    ADD_PRODUCT = "AddProduct"
+    REMOVE_PRODUCT = "RemoveProduct"
+    UPDATE_PRODUCT = "UpdateProduct"
+    SUSPEND = "Suspend"
+    RESUME = "Resume"
+    OWNER_TRANSFER = "OwnerTransfer"
+
+
+class OrderChargeOverride(BaseModel):
+    """Charge override in an order action."""
+    product_rate_plan_charge_id: Optional[str] = None
+    price: Optional[float] = None
+    quantity: Optional[float] = None
+    effective_date: Optional[str] = None
+    custom_fields: Optional[Dict[str, Any]] = None
+
+
+class OrderAction(BaseModel):
+    """Individual order action."""
+    type: OrderActionType
+    trigger_dates: Optional[Dict[str, str]] = Field(
+        None,
+        description="Trigger dates like contractEffective, serviceActivation"
+    )
+    add_product: Optional[Dict[str, Any]] = Field(None, description="Rate plan to add")
+    remove_product: Optional[Dict[str, Any]] = Field(None, description="Rate plan to remove")
+    charge_overrides: Optional[List[OrderChargeOverride]] = None
+
+
+class OrderConfig(BaseModel):
+    """Complete order configuration for advisory purposes."""
+    subscription_number: Optional[str] = Field(None, description="Existing subscription to modify")
+    account_id: Optional[str] = None
+    order_date: str
+    description: Optional[str] = None
+    actions: List[OrderAction] = []
+    processing_options: Optional[Dict[str, Any]] = None
+
+
+# ============ Prepaid Balance Models ============
+
+class PrepaidDrawdownConfig(BaseModel):
+    """Prepaid with Drawdown charge configuration."""
+    charge_name: str
+    prepaid_uom: str = Field(..., description="Unit of measure, e.g., API_CALL, SMS, Storage_GB")
+    prepaid_quantity: float
+    prepaid_amount: float = Field(..., description="Dollar amount for the prepaid charge")
+    validity_period_type: Literal["SUBSCRIPTION_TERM", "ANNUAL", "MONTHLY", "CUSTOM"] = "SUBSCRIPTION_TERM"
+    custom_validity_days: Optional[int] = None
+    rollover_enabled: bool = False
+    rollover_percentage: Optional[float] = None
+    rollover_cap: Optional[float] = None
+
+
+class TopUpConfig(BaseModel):
+    """Auto top-up configuration."""
+    enabled: bool = True
+    threshold_type: Literal["Percentage", "Absolute"] = "Percentage"
+    threshold_value: float = Field(..., description="e.g., 20 for 20% or 1000 for absolute units")
+    top_up_amount: Optional[float] = Field(None, description="If None, use fieldLookup")
+    use_field_lookup: bool = False
+    field_lookup_expression: Optional[str] = Field(
+        None,
+        description="e.g., fieldLookup('Account.TopUpAmount__c')"
+    )
+
+
+class PrepaidBalanceConfig(BaseModel):
+    """Complete prepaid balance configuration."""
+    product_name: str
+    rate_plan_name: str
+    drawdown_charge: PrepaidDrawdownConfig
+    top_up_config: Optional[TopUpConfig] = None
+    overage_handling: Literal["Block", "AllowOverage", "TopUp"] = "AllowOverage"
+    overage_price_per_unit: Optional[float] = None
+
+
+# ============ Account Custom Field Models ============
+
+class CustomFieldDefinition(BaseModel):
+    """Account custom field definition."""
+    name: str = Field(..., description="API name, e.g., TopUpAmount__c")
+    label: str = Field(..., description="Display label")
+    type: Literal["Text", "Number", "Date", "Picklist", "Checkbox"]
+    object_type: Literal["Account", "Subscription", "RatePlan", "Charge"] = "Account"
+    description: Optional[str] = None
+    required: bool = False
+    default_value: Optional[Any] = None
+    picklist_values: Optional[List[str]] = None
+
+
+# ============ Multi-Attribute Pricing Models ============
+
+class PriceAttribute(BaseModel):
+    """Attribute for multi-attribute pricing."""
+    name: str
+    values: List[str]
+
+
+class MultiAttributePricingConfig(BaseModel):
+    """Multi-Attribute Pricing configuration."""
+    charge_name: str
+    pricing_attributes: List[PriceAttribute]
+    price_matrix: Dict[str, float] = Field(
+        ...,
+        description="Key format: 'attr1:value1|attr2:value2' -> price"
+    )
+    use_field_lookup: bool = False
+    field_lookup_attribute: Optional[str] = None
+
+
+# ============ Advisory Payload Container ============
+
+class AdvisoryPayload(BaseModel):
+    """Container for advisory payloads (not executed)."""
+    payload: Dict[str, Any]
+    api_type: BillingArchitectApiType
+    api_endpoint: str = Field(..., description="Zuora API endpoint this would target")
+    http_method: Literal["GET", "POST", "PUT", "DELETE"] = "POST"
+    payload_id: Optional[str] = None
+    notes: Optional[str] = Field(None, description="Implementation notes for the user")
+    prerequisites: Optional[List[str]] = Field(None, description="Steps to complete before this")
