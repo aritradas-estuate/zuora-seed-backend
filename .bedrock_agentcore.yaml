@@ -1,0 +1,54 @@
+default_agent: zuora_seed
+agents:
+  zuora_seed:
+    name: zuora_seed
+    entrypoint: /Users/aritra/Documents/Code/estuate/zuora_seed_backend/agentcore_app.py
+    deployment_type: direct_code_deploy
+    runtime_type: PYTHON_3_10
+    platform: linux/arm64
+    container_runtime: null
+    source_path: /Users/aritra/Documents/Code/estuate/zuora_seed_backend
+    aws:
+      execution_role: arn:aws:iam::870678671753:role/AmazonBedrockAgentCoreSDKRuntime-us-east-2-494e65ea17
+      execution_role_auto_create: false
+      account: '870678671753'
+      region: us-east-2
+      ecr_repository: null
+      ecr_auto_create: false
+      s3_path: s3://bedrock-agentcore-codebuild-sources-870678671753-us-east-2
+      s3_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+        network_mode_config: null
+      protocol_configuration:
+        server_protocol: HTTP
+      observability:
+        enabled: true
+      lifecycle_configuration:
+        idle_runtime_session_timeout: null
+        max_lifetime: null
+    bedrock_agentcore:
+      agent_id: zuora_seed-XdxAtV5qav
+      agent_arn: arn:aws:bedrock-agentcore:us-east-2:870678671753:runtime/zuora_seed-XdxAtV5qav
+      agent_session_id: null
+    codebuild:
+      project_name: null
+      execution_role: null
+      source_bucket: null
+    memory:
+      mode: STM_ONLY
+      memory_id: zuora_seed_mem-AooXKl2TRS
+      memory_arn: arn:aws:bedrock-agentcore:us-east-2:870678671753:memory/zuora_seed_mem-AooXKl2TRS
+      memory_name: zuora_seed_mem
+      event_expiry_days: 30
+      first_invoke_memory_check_done: true
+      was_created_by_toolkit: true
+    identity:
+      credential_providers: []
+      workload: null
+    authorizer_configuration: null
+    request_header_configuration: null
+    oauth_configuration: null
+    api_key_env_var_name: null
+    api_key_credential_provider_name: null
+    is_generated_by_agentcore_create: false
