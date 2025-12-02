@@ -421,16 +421,16 @@ def get_zuora_rate_plan_details(product_id: str, rate_plan_name: Optional[str] =
     return output
 
 
-@tool
+@tool(context=True)
 def update_zuora_product(
+    tool_context: ToolContext,
     product_id: str,
     attribute: Literal["name", "sku", "description", "effectiveStartDate", "effectiveEndDate"],
     new_value: str
 ) -> str:
     """
-    Update a product attribute in Zuora.
-
-    ⚠️ IMPORTANT: Updates only affect NEW subscriptions. Existing subscriptions keep the old values.
+    Generate a Zuora API payload to update a product attribute.
+    The payload will be returned for you to execute via the Zuora API.
 
     Args:
         product_id: The product ID to update
@@ -438,45 +438,43 @@ def update_zuora_product(
         new_value: The new value for the attribute
 
     Returns:
-        Confirmation of the update with warning about subscription impact.
+        The generated API payload for the user to execute.
     """
-    client = get_zuora_client()
+    payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
 
-    # First get current product to show what's changing
-    current = client.get_product(product_id)
-    if not current.get("success"):
-        return f"❌ Error retrieving product: {current.get('error', 'Unknown error')}"
+    update_payload = {
+        "payload": {
+            "method": "PUT",
+            "endpoint": f"/v1/catalog/products/{product_id}",
+            "body": {attribute: new_value}
+        },
+        "zuora_api_type": "product_update",
+        "payload_id": str(uuid.uuid4())[:8]
+    }
 
-    product = current.get("data", {})
-    old_value = product.get(attribute, "N/A")
+    payloads.append(update_payload)
+    tool_context.agent.state.set(PAYLOADS_STATE_KEY, payloads)
 
-    # Perform update
-    result = client.update_product(product_id, {attribute: new_value})
+    return f"""Generated product update payload:
 
-    if not result.get("success"):
-        return f"❌ Error updating product: {result.get('error', 'Unknown error')}"
+**Endpoint:** PUT /v1/catalog/products/{product_id}
+**Body:** {{"{attribute}": "{new_value}"}}
 
-    return f"""✅ Successfully updated product '{product.get('name', 'N/A')}'
+This payload has been added to the response. Execute it via the Zuora API to apply the update.
 
-**Change:**
-• {attribute}: '{old_value}' → '{new_value}'
-
-⚠️ **Please note:** This update will be effective only for NEW subscriptions created after this change. Existing subscriptions will continue to use the previous {attribute}.
-
-Would you like to update another attribute?"""
+⚠️ Note: Updates only affect NEW subscriptions. Existing subscriptions keep the old values."""
 
 
-@tool
+@tool(context=True)
 def update_zuora_rate_plan(
+    tool_context: ToolContext,
     rate_plan_id: str,
     attribute: Literal["name", "description", "effectiveStartDate", "effectiveEndDate"],
     new_value: str
 ) -> str:
     """
-    Update a rate plan attribute in Zuora.
-
-    ⚠️ IMPORTANT: Updates only affect NEW subscriptions. Existing subscriptions keep the old values.
-    ⚠️ Note: Rate plan end date must be within the product's effective date range.
+    Generate a Zuora API payload to update a rate plan attribute.
+    The payload will be returned for you to execute via the Zuora API.
 
     Args:
         rate_plan_id: The rate plan ID to update
@@ -484,45 +482,44 @@ def update_zuora_rate_plan(
         new_value: The new value for the attribute
 
     Returns:
-        Confirmation of the update with warning about subscription impact.
+        The generated API payload for the user to execute.
     """
-    client = get_zuora_client()
+    payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
 
-    # Get current rate plan
-    current = client.get_rate_plan(rate_plan_id)
-    if not current.get("success"):
-        return f"❌ Error retrieving rate plan: {current.get('error', 'Unknown error')}"
+    update_payload = {
+        "payload": {
+            "method": "PUT",
+            "endpoint": f"/v1/catalog/product-rate-plans/{rate_plan_id}",
+            "body": {attribute: new_value}
+        },
+        "zuora_api_type": "rate_plan_update",
+        "payload_id": str(uuid.uuid4())[:8]
+    }
 
-    rate_plan = current.get("data", {})
-    old_value = rate_plan.get(attribute, "N/A")
+    payloads.append(update_payload)
+    tool_context.agent.state.set(PAYLOADS_STATE_KEY, payloads)
 
-    # Perform update
-    result = client.update_rate_plan(rate_plan_id, {attribute: new_value})
+    return f"""Generated rate plan update payload:
 
-    if not result.get("success"):
-        return f"❌ Error updating rate plan: {result.get('error', 'Unknown error')}"
+**Endpoint:** PUT /v1/catalog/product-rate-plans/{rate_plan_id}
+**Body:** {{"{attribute}": "{new_value}"}}
 
-    return f"""✅ Successfully updated rate plan '{rate_plan.get('name', 'N/A')}'
+This payload has been added to the response. Execute it via the Zuora API to apply the update.
 
-**Change:**
-• {attribute}: '{old_value}' → '{new_value}'
-
-⚠️ **Please note:** This update will be effective only for NEW subscriptions created after this change. Existing subscriptions will continue to use the previous {attribute}.
-
-Would you like to update another attribute?"""
+⚠️ Note: Updates only affect NEW subscriptions. Existing subscriptions keep the old values.
+⚠️ Note: Rate plan end date must be within the product's effective date range."""
 
 
-@tool
+@tool(context=True)
 def update_zuora_charge(
+    tool_context: ToolContext,
     charge_id: str,
     attribute: str,
     new_value: Any
 ) -> str:
     """
-    Update a charge attribute in Zuora.
-
-    ⚠️ IMPORTANT: Updates only affect NEW subscriptions. Existing subscriptions keep the old values.
-    ⚠️ RESTRICTION: Charge Model and Charge Type CANNOT be changed if used in existing subscriptions.
+    Generate a Zuora API payload to update a charge attribute.
+    The payload will be returned for you to execute via the Zuora API.
 
     Args:
         charge_id: The charge ID to update
@@ -530,10 +527,8 @@ def update_zuora_charge(
         new_value: The new value for the attribute
 
     Returns:
-        Confirmation of the update with warning about subscription impact.
+        The generated API payload for the user to execute.
     """
-    client = get_zuora_client()
-
     # Check for restricted attributes
     restricted_attrs = ["model", "type", "chargeModel", "chargeType"]
     if attribute.lower() in [a.lower() for a in restricted_attrs]:
@@ -541,32 +536,32 @@ def update_zuora_charge(
 
 Charge Model and Charge Type cannot be changed if this charge is used in any existing subscriptions, as it impacts active billing calculations.
 
-👉 **Alternative:** Create a new Rate Plan Charge with the desired model and retire this old charge at a future date.
+👉 **Alternative:** Create a new Rate Plan Charge with the desired model and retire this old charge at a future date."""
 
-Would you like me to help create a new charge instead?"""
+    payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
 
-    # Get current charge
-    current = client.get_charge(charge_id)
-    if not current.get("success"):
-        return f"❌ Error retrieving charge: {current.get('error', 'Unknown error')}"
+    update_payload = {
+        "payload": {
+            "method": "PUT",
+            "endpoint": f"/v1/catalog/product-rate-plan-charges/{charge_id}",
+            "body": {attribute: new_value}
+        },
+        "zuora_api_type": "charge_update",
+        "payload_id": str(uuid.uuid4())[:8]
+    }
 
-    charge = current.get("data", {})
-    old_value = charge.get(attribute, "N/A")
+    payloads.append(update_payload)
+    tool_context.agent.state.set(PAYLOADS_STATE_KEY, payloads)
 
-    # Perform update
-    result = client.update_charge(charge_id, {attribute: new_value})
+    return f"""Generated charge update payload:
 
-    if not result.get("success"):
-        return f"❌ Error updating charge: {result.get('error', 'Unknown error')}"
+**Endpoint:** PUT /v1/catalog/product-rate-plan-charges/{charge_id}
+**Body:** {{"{attribute}": {json.dumps(new_value)}}}
 
-    return f"""✅ Successfully updated charge '{charge.get('name', 'N/A')}'
+This payload has been added to the response. Execute it via the Zuora API to apply the update.
 
-**Change:**
-• {attribute}: '{old_value}' → '{new_value}'
-
-⚠️ **Please note:** This update will be effective only for NEW subscriptions created after this change. Existing subscriptions will continue to use the previous {attribute}.
-
-Would you like to update another attribute?"""
+⚠️ Note: Updates only affect NEW subscriptions. Existing subscriptions keep the old values.
+⚠️ Note: Charge Model and Charge Type CANNOT be changed if used in existing subscriptions."""
 
 
 # ============ Billing Architect Advisory Tools ============
