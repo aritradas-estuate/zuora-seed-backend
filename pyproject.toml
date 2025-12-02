@@ -10,6 +10,7 @@ dependencies = [
     "boto3>=1.41.5",
     "botocore[crt]>=1.41.5",
     "python-dotenv>=1.2.1",
+    "requests>=2.31.0",
     "rich>=14.2.0",
     "strands-agents>=1.18.0",
     "typer>=0.20.0",

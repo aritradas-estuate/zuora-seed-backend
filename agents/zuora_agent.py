@@ -174,18 +174,24 @@ def create_agent(persona: str) -> Agent:
         )
 
 
-# Default agent for backward compatibility
-# Configure model from environment variable (streaming disabled for tool use)
-model = BedrockModel(
-    model_id=GEN_MODEL_ID,
-    streaming=False
-)
-
 # All tools combined (for backward compatibility)
 ALL_TOOLS = SHARED_TOOLS + PROJECT_MANAGER_TOOLS
 
-agent = Agent(
-    model=model,
-    system_prompt=PROJECT_MANAGER_SYSTEM_PROMPT,
-    tools=ALL_TOOLS,
-)
+# Lazy initialization for default agent (avoids timeout during module import)
+_default_agent = None
+
+
+def get_default_agent() -> Agent:
+    """Get or create the default agent (lazy initialization)."""
+    global _default_agent
+    if _default_agent is None:
+        model = BedrockModel(
+            model_id=GEN_MODEL_ID,
+            streaming=False
+        )
+        _default_agent = Agent(
+            model=model,
+            system_prompt=PROJECT_MANAGER_SYSTEM_PROMPT,
+            tools=ALL_TOOLS,
+        )
+    return _default_agent
