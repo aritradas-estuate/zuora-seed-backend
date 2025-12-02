@@ -1,3 +1,4 @@
 bedrock-agentcore
 strands-agents
 python-dotenv
+requests

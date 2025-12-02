@@ -1,5 +1,5 @@
 import json
-from agents.zuora_agent import agent
+from agents.zuora_agent import get_default_agent
 from agentcore_app import invoke
 
 
@@ -303,6 +303,8 @@ def test_pm_7_execute():
 
 def test_agent_direct():
     """Test the agent directly (legacy mode)."""
+    agent = get_default_agent()
+
     print("\n--- Test 1: Capability Check ---")
     try:
         response = agent("Hi, what can you do?", stream=False)
