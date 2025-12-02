@@ -334,6 +334,212 @@ class ZuoraClient:
         return self._request("PUT", f"/v1/catalog/product-rate-plan-charges/{charge_id}", data=updates)
 
     # =========================================================================
+    # Commerce API - Product Operations (Nested Creation Support)
+    # =========================================================================
+
+    def commerce_create_product(self, product_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create product with nested rate plans and charges via Commerce API.
+
+        POST /commerce/products
+
+        Supports nested structure with @{Reference.Id} placeholders:
+        {
+            "name": "Product Name",
+            "sku": "SKU-001",
+            "productRatePlans": [
+                {
+                    "name": "Plan 1",
+                    "productRatePlanCharges": [
+                        {"name": "Charge 1", "type": "Recurring", ...}
+                    ]
+                }
+            ]
+        }
+
+        Args:
+            product_data: Complete product structure with nested rate plans and charges
+
+        Returns:
+            Created product with IDs for all nested objects or error
+        """
+        return self._request("POST", "/commerce/products", data=product_data)
+
+    def commerce_update_product(self, product_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Update product via Commerce API.
+
+        Args:
+            product_id: Product ID
+            updates: Fields to update
+
+        Returns:
+            Updated product or error
+        """
+        return self._request("PUT", f"/commerce/products/{product_id}", data=updates)
+
+    def commerce_query_products(self, filters: Optional[Dict] = None) -> Dict[str, Any]:
+        """
+        Query products via Commerce API.
+
+        Args:
+            filters: Optional filter criteria
+
+        Returns:
+            List of products or error
+        """
+        return self._request("POST", "/commerce/products/query", data=filters or {})
+
+    # =========================================================================
+    # Commerce API - Rate Plan Operations
+    # =========================================================================
+
+    def commerce_create_rate_plan(
+        self,
+        product_id: str,
+        rate_plan_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Create rate plan via Commerce API.
+
+        Args:
+            product_id: Parent product ID
+            rate_plan_data: Rate plan configuration
+
+        Returns:
+            Created rate plan or error
+        """
+        rate_plan_data["productId"] = product_id
+        return self._request("POST", "/commerce/product-rate-plans", data=rate_plan_data)
+
+    def commerce_update_rate_plan(
+        self,
+        rate_plan_id: str,
+        updates: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Update rate plan via Commerce API.
+
+        Args:
+            rate_plan_id: Rate plan ID
+            updates: Fields to update
+
+        Returns:
+            Updated rate plan or error
+        """
+        return self._request("PUT", f"/commerce/product-rate-plans/{rate_plan_id}", data=updates)
+
+    def commerce_query_rate_plans(
+        self,
+        product_id: Optional[str] = None,
+        filters: Optional[Dict] = None
+    ) -> Dict[str, Any]:
+        """
+        Query rate plans via Commerce API.
+
+        Args:
+            product_id: Optional product ID to filter by
+            filters: Optional additional filter criteria
+
+        Returns:
+            List of rate plans or error
+        """
+        query_data = filters or {}
+        if product_id:
+            query_data["productId"] = product_id
+        return self._request("POST", "/commerce/product-rate-plans/query", data=query_data)
+
+    # =========================================================================
+    # Commerce API - Charge Operations with Dynamic Pricing
+    # =========================================================================
+
+    def commerce_create_charge(
+        self,
+        rate_plan_id: str,
+        charge_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Create charge via Commerce API.
+
+        Args:
+            rate_plan_id: Parent rate plan ID
+            charge_data: Charge configuration
+
+        Returns:
+            Created charge or error
+        """
+        charge_data["productRatePlanId"] = rate_plan_id
+        return self._request("POST", "/commerce/product-rate-plan-charges", data=charge_data)
+
+    def commerce_create_charge_with_dynamic_pricing(
+        self,
+        rate_plan_id: str,
+        charge_data: Dict[str, Any],
+        dynamic_pricing_config: Optional[Dict] = None
+    ) -> Dict[str, Any]:
+        """
+        Create charge with Dynamic Pricing via Commerce API.
+
+        Dynamic Pricing supports:
+        - fieldLookup() expressions for customer-specific pricing
+        - Attribute-based pricing matrices
+        - Formula-based pricing
+
+        Args:
+            rate_plan_id: Parent rate plan ID
+            charge_data: Base charge configuration
+            dynamic_pricing_config: Dynamic pricing configuration with:
+                - pricingType: "Static", "Dynamic", or "Formula"
+                - formula: fieldLookup expression, e.g., "fieldLookup('Account.Price__c')"
+                - defaultPrice: Fallback price when dynamic lookup fails
+                - attributes: Attribute-based pricing matrix
+
+        Returns:
+            Created charge with dynamic pricing or error
+        """
+        charge_data["productRatePlanId"] = rate_plan_id
+        if dynamic_pricing_config:
+            charge_data["dynamicPricing"] = dynamic_pricing_config
+        return self._request("POST", "/commerce/product-rate-plan-charges", data=charge_data)
+
+    def commerce_update_charge(
+        self,
+        charge_id: str,
+        updates: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Update charge via Commerce API.
+
+        Args:
+            charge_id: Charge ID
+            updates: Fields to update
+
+        Returns:
+            Updated charge or error
+        """
+        return self._request("PUT", f"/commerce/product-rate-plan-charges/{charge_id}", data=updates)
+
+    def commerce_query_charges(
+        self,
+        rate_plan_id: Optional[str] = None,
+        filters: Optional[Dict] = None
+    ) -> Dict[str, Any]:
+        """
+        Query charges via Commerce API.
+
+        Args:
+            rate_plan_id: Optional rate plan ID to filter by
+            filters: Optional additional filter criteria
+
+        Returns:
+            List of charges or error
+        """
+        query_data = filters or {}
+        if rate_plan_id:
+            query_data["productRatePlanId"] = rate_plan_id
+        return self._request("POST", "/commerce/product-rate-plan-charges/query", data=query_data)
+
+    # =========================================================================
     # Utility Methods
     # =========================================================================
 

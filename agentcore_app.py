@@ -7,6 +7,7 @@ import uuid
 if TYPE_CHECKING:
     from agents.zuora_agent import create_agent
     from agents.models import ChatRequest, ChatResponse, Citation, ZuoraApiPayload
+    from agents.html_formatter import markdown_to_html
 
 app = BedrockAgentCoreApp()
 
@@ -119,9 +120,12 @@ def invoke(payload: dict) -> dict:
     # Invoke agent
     try:
         response = agent(full_prompt, session_id=conversation_id)
-        answer = str(response)
+        raw_answer = str(response)
+        # Convert markdown to HTML for formatted output
+        from agents.html_formatter import markdown_to_html
+        answer = markdown_to_html(raw_answer)
     except Exception as e:
-        answer = f"Error processing request: {str(e)}"
+        answer = f"<p>Error processing request: {str(e)}</p>"
 
     # Extract modified payloads from agent state
     modified_payloads_data = agent.state.get(PAYLOADS_STATE_KEY) or []

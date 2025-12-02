@@ -1,11 +1,274 @@
 from strands import tool
 from strands.types.tools import ToolContext
-from typing import Optional, List, Dict, Any, Literal
+from typing import Optional, List, Dict, Any, Literal, Tuple
 import datetime
 import json
 import uuid
 from .models import ProductSpec, ZuoraApiType
 from .zuora_client import get_zuora_client
+
+
+# ============ Required Fields Schema for Validation ============
+
+REQUIRED_FIELDS = {
+    "product": {
+        "always": ["Name", "EffectiveStartDate"],
+        "nested": {},
+        "conditional": {},
+        "descriptions": {
+            "Name": "Product name",
+            "EffectiveStartDate": "Start date (YYYY-MM-DD format, e.g., 2024-01-01)"
+        }
+    },
+    "product_rate_plan": {
+        "always": ["Name", "ProductId"],
+        "nested": {},
+        "conditional": {},
+        "descriptions": {
+            "Name": "Rate plan name",
+            "ProductId": "Product ID (use @{Product.Id} to reference a product in the same payload)"
+        }
+    },
+    "product_rate_plan_charge": {
+        "always": ["Name", "ProductRatePlanId", "ChargeModel", "ChargeType"],
+        "nested": {},
+        "conditional": {
+            "ChargeType=Recurring": ["BillingPeriod"],
+            "ChargeType=Usage": ["UOM"],
+            "ChargeModel=FlatFee": ["Price"],
+            "ChargeModel=PerUnit": ["Price"],
+            "ChargeModel=Tiered": ["ProductRatePlanChargeTierData"],
+            "ChargeModel=Volume": ["ProductRatePlanChargeTierData"]
+        },
+        "descriptions": {
+            "Name": "Charge name",
+            "ProductRatePlanId": "Rate plan ID (use @{ProductRatePlan.Id} or @{ProductRatePlan[0].Id})",
+            "ChargeModel": "Pricing model (FlatFee, PerUnit, Tiered, or Volume)",
+            "ChargeType": "Charge type (Recurring, OneTime, or Usage)",
+            "BillingPeriod": "Billing period for recurring charges (Month, Quarter, Annual)",
+            "UOM": "Unit of measure for usage charges (e.g., API_CALL, GB, SMS)",
+            "Price": "Price amount (numeric)",
+            "ProductRatePlanChargeTierData": "Tier pricing data for tiered/volume charges"
+        }
+    },
+    "account": {
+        "always": ["name", "currency", "billCycleDay"],
+        "nested": {
+            "billToContact": ["firstName", "lastName", "country"]
+        },
+        "conditional": {},
+        "descriptions": {
+            "name": "Account name",
+            "currency": "Currency code (USD, EUR, GBP)",
+            "billCycleDay": "Bill cycle day (1-31)",
+            "billToContact.firstName": "Billing contact first name",
+            "billToContact.lastName": "Billing contact last name",
+            "billToContact.country": "Billing contact country"
+        }
+    },
+    "subscription": {
+        "always": ["accountKey", "contractEffectiveDate", "termType", "subscribeToRatePlans"],
+        "nested": {},
+        "conditional": {
+            "termType=TERMED": ["initialTerm", "renewalTerm", "autoRenew"]
+        },
+        "descriptions": {
+            "accountKey": "Account ID or account number",
+            "contractEffectiveDate": "Contract effective date (YYYY-MM-DD)",
+            "termType": "Term type (TERMED or EVERGREEN)",
+            "subscribeToRatePlans": "Array of rate plans with productRatePlanId",
+            "initialTerm": "Initial term length in months (required for TERMED)",
+            "renewalTerm": "Renewal term length in months (required for TERMED)",
+            "autoRenew": "Auto-renew flag true/false (required for TERMED)"
+        }
+    },
+    "billrun": {
+        "always": ["invoiceDate", "targetDate"],
+        "nested": {},
+        "conditional": {},
+        "descriptions": {
+            "invoiceDate": "Invoice date (YYYY-MM-DD)",
+            "targetDate": "Target date for billing (YYYY-MM-DD)"
+        }
+    },
+    "contact": {
+        "always": ["firstName", "lastName", "country"],
+        "nested": {},
+        "conditional": {},
+        "descriptions": {
+            "firstName": "Contact first name",
+            "lastName": "Contact last name",
+            "country": "Country name"
+        }
+    },
+    "commerce_product_nested": {
+        "always": ["objects"],
+        "nested": {},
+        "conditional": {},
+        "descriptions": {
+            "objects": "Array of nested objects (Product, ProductRatePlan, ProductRatePlanCharge)"
+        }
+    },
+    "commerce_product": {
+        "always": ["Name", "EffectiveStartDate"],
+        "nested": {},
+        "conditional": {},
+        "descriptions": {
+            "Name": "Product name",
+            "EffectiveStartDate": "Start date (YYYY-MM-DD)"
+        }
+    },
+    "commerce_rate_plan": {
+        "always": ["Name", "ProductId"],
+        "nested": {},
+        "conditional": {},
+        "descriptions": {
+            "Name": "Rate plan name",
+            "ProductId": "Product ID"
+        }
+    },
+    "commerce_charge": {
+        "always": ["Name", "ProductRatePlanId", "ChargeModel", "ChargeType"],
+        "nested": {},
+        "conditional": {
+            "ChargeType=Recurring": ["BillingPeriod"],
+            "ChargeType=Usage": ["UOM"]
+        },
+        "descriptions": {
+            "Name": "Charge name",
+            "ProductRatePlanId": "Rate plan ID",
+            "ChargeModel": "Pricing model",
+            "ChargeType": "Charge type",
+            "BillingPeriod": "Billing period",
+            "UOM": "Unit of measure"
+        }
+    },
+    "commerce_charge_dynamic_pricing": {
+        "always": ["Name", "ProductRatePlanId", "ChargeModel", "ChargeType"],
+        "nested": {},
+        "conditional": {},
+        "descriptions": {
+            "Name": "Charge name",
+            "ProductRatePlanId": "Rate plan ID",
+            "ChargeModel": "Pricing model",
+            "ChargeType": "Charge type"
+        }
+    }
+}
+
+
+def _get_nested_value(data: Dict[str, Any], path: str) -> Any:
+    """Get a nested value from a dictionary using dot notation."""
+    keys = path.split(".")
+    current = data
+    for key in keys:
+        if isinstance(current, dict) and key in current:
+            current = current[key]
+        else:
+            return None
+    return current
+
+
+def _check_field_exists(data: Dict[str, Any], field: str) -> bool:
+    """Check if a field exists in the payload (supports nested dot notation)."""
+    if "." in field:
+        return _get_nested_value(data, field) is not None
+    # Check both PascalCase and camelCase versions
+    return field in data or field.lower() in {k.lower() for k in data.keys()}
+
+
+def validate_payload(api_type: str, payload_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
+    """
+    Validate payload against required fields for the given API type.
+
+    Args:
+        api_type: The API type (product, account, subscription, etc.)
+        payload_data: The payload data dictionary
+
+    Returns:
+        Tuple of (is_valid, list_of_missing_field_descriptions)
+    """
+    api_type_lower = api_type.lower()
+
+    # Get schema for this API type
+    schema = REQUIRED_FIELDS.get(api_type_lower)
+    if not schema:
+        # Unknown type, skip validation
+        return (True, [])
+
+    missing = []
+    descriptions = schema.get("descriptions", {})
+
+    # Check "always" required fields
+    for field in schema.get("always", []):
+        if not _check_field_exists(payload_data, field):
+            desc = descriptions.get(field, field)
+            missing.append((field, desc))
+
+    # Check "nested" required fields
+    for parent_field, nested_fields in schema.get("nested", {}).items():
+        parent_data = payload_data.get(parent_field, {})
+        if not parent_data:
+            # Parent is missing, add all nested fields
+            for nested_field in nested_fields:
+                full_path = f"{parent_field}.{nested_field}"
+                desc = descriptions.get(full_path, nested_field)
+                missing.append((full_path, desc))
+        else:
+            # Check each nested field
+            for nested_field in nested_fields:
+                if nested_field not in parent_data:
+                    full_path = f"{parent_field}.{nested_field}"
+                    desc = descriptions.get(full_path, nested_field)
+                    missing.append((full_path, desc))
+
+    # Check "conditional" required fields
+    for condition, conditional_fields in schema.get("conditional", {}).items():
+        # Parse condition like "ChargeType=Recurring"
+        if "=" in condition:
+            cond_field, cond_value = condition.split("=", 1)
+            # Get actual value from payload (case-insensitive)
+            actual_value = None
+            for key in payload_data.keys():
+                if key.lower() == cond_field.lower():
+                    actual_value = payload_data[key]
+                    break
+
+            # Check if condition is met
+            if actual_value and str(actual_value).upper() == cond_value.upper():
+                # Condition met, check required fields
+                for field in conditional_fields:
+                    if not _check_field_exists(payload_data, field):
+                        desc = descriptions.get(field, field)
+                        cond_desc = f"{desc} (required because {cond_field}={cond_value})"
+                        missing.append((field, cond_desc))
+
+    return (len(missing) == 0, missing)
+
+
+def format_validation_questions(api_type: str, missing_fields: List[Tuple[str, str]]) -> str:
+    """
+    Format missing fields as HTML clarifying questions.
+
+    Args:
+        api_type: The API type
+        missing_fields: List of (field_name, description) tuples
+
+    Returns:
+        HTML-formatted string with questions
+    """
+    output = f"<h4>Clarifying Questions Needed</h4>\n"
+    output += f"<p>To create this <strong>{api_type}</strong> payload, I need the following information:</p>\n"
+    output += "<ol>\n"
+
+    for field_name, description in missing_fields:
+        output += f"  <li>What is the <strong>{field_name}</strong>? ({description})</li>\n"
+
+    output += "</ol>\n"
+    output += "<p><em>Please provide these details and I'll create the payload.</em></p>"
+
+    return output
+
 
 # --- Mock Database ---
 products_db = {}
@@ -168,18 +431,32 @@ def create_payload(
     """
     Create a new Zuora API payload and add it to the conversation state.
 
+    This tool validates required fields before creating the payload.
+    If required fields are missing, it returns clarifying questions instead of creating the payload.
+
     Args:
-        api_type: The API type for the new payload (product, product_rate_plan, product_rate_plan_charge, product_rate_plan_charge_tier)
+        api_type: The API type for the new payload (product, product_rate_plan, product_rate_plan_charge, account, subscription, etc.)
         payload_data: The payload data as a dictionary
 
     Returns:
-        Confirmation message with the created payload.
+        If validation fails: HTML-formatted clarifying questions for missing fields.
+        If validation passes: HTML-formatted confirmation with the created payload and reference guide.
     """
+    from .html_formatter import generate_reference_documentation, format_payload_with_references
+
     # Validate api_type
     valid_types = [t.value for t in ZuoraApiType]
     if api_type.lower() not in valid_types:
-        return f"Error: Invalid api_type '{api_type}'. Valid types are: {', '.join(valid_types)}"
+        return f"<p>Error: Invalid api_type '{api_type}'. Valid types are: {', '.join(valid_types)}</p>"
 
+    # Validate required fields before creating payload
+    is_valid, missing_fields = validate_payload(api_type, payload_data)
+
+    if not is_valid:
+        # Return clarifying questions for missing fields
+        return format_validation_questions(api_type, missing_fields)
+
+    # Validation passed - create the payload
     payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
 
     new_payload = {
@@ -191,7 +468,22 @@ def create_payload(
     payloads.append(new_payload)
     tool_context.agent.state.set(PAYLOADS_STATE_KEY, payloads)
 
-    return f"Successfully created new {api_type} payload:\n{json.dumps(new_payload, indent=2)}"
+    # Generate output with reference documentation for nested objects
+    output = f"<h4>Created {api_type} Payload</h4>\n"
+    output += f"<p><strong>Payload ID:</strong> <code>{new_payload['payload_id']}</code></p>\n"
+
+    # Check if this is a nested Commerce API payload with objects array
+    if "objects" in payload_data:
+        ref_doc = format_payload_with_references(payload_data["objects"])
+        output += ref_doc
+    # Check for nested rate plans in product payloads
+    elif api_type.lower() == "product" and ("productRatePlans" in payload_data or "ProductRatePlans" in payload_data):
+        ref_doc = generate_reference_documentation(payload_data)
+        output += ref_doc
+
+    output += f"\n<pre><code>{json.dumps(new_payload, indent=2)}</code></pre>"
+
+    return output
 
 
 @tool(context=True)
@@ -562,6 +854,245 @@ This payload has been added to the response. Execute it via the Zuora API to app
 
 ⚠️ Note: Updates only affect NEW subscriptions. Existing subscriptions keep the old values.
 ⚠️ Note: Charge Model and Charge Type CANNOT be changed if used in existing subscriptions."""
+
+
+# ============ Commerce API Tools (Nested Creation Support) ============
+
+@tool(context=True)
+def create_product_with_nested_objects(
+    tool_context: ToolContext,
+    product_name: str,
+    sku: str,
+    effective_start_date: str,
+    rate_plans: List[Dict[str, Any]],
+    description: Optional[str] = None,
+    effective_end_date: Optional[str] = None
+) -> str:
+    """
+    Create a complete product with nested rate plans and charges using Commerce API.
+
+    Creates entire hierarchy in a single API call:
+    - Product
+    - ProductRatePlans (nested)
+    - ProductRatePlanCharges (nested within plans)
+
+    Args:
+        product_name: Name of the product
+        sku: Product SKU
+        effective_start_date: Start date in YYYY-MM-DD format
+        rate_plans: List of rate plan dictionaries, each can contain nested charges
+                    Example: [{"name": "Basic", "charges": [{"name": "Monthly Fee", "type": "Recurring", "price": 99.99}]}]
+        description: Optional product description
+        effective_end_date: Optional end date in YYYY-MM-DD format
+
+    Returns:
+        HTML-formatted confirmation with object reference guide.
+    """
+    from .html_formatter import format_payload_with_references
+
+    payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
+
+    # Build nested product structure
+    product_payload = {
+        "type": "Product",
+        "Name": product_name,
+        "SKU": sku,
+        "EffectiveStartDate": effective_start_date,
+    }
+
+    if description:
+        product_payload["Description"] = description
+    if effective_end_date:
+        product_payload["EffectiveEndDate"] = effective_end_date
+
+    # Build complete objects list for Commerce API
+    objects = [product_payload]
+
+    for rp_idx, rp in enumerate(rate_plans):
+        rate_plan_obj = {
+            "type": "ProductRatePlan",
+            "Name": rp.get("name", f"Rate Plan {rp_idx + 1}"),
+            "ProductId": "@{Product.Id}",
+        }
+        if rp.get("description"):
+            rate_plan_obj["Description"] = rp["description"]
+        if rp.get("effectiveStartDate"):
+            rate_plan_obj["EffectiveStartDate"] = rp["effectiveStartDate"]
+        if rp.get("effectiveEndDate"):
+            rate_plan_obj["EffectiveEndDate"] = rp["effectiveEndDate"]
+
+        objects.append(rate_plan_obj)
+
+        # Add charges for this rate plan
+        charges = rp.get("charges", [])
+        for ch_idx, ch in enumerate(charges):
+            charge_obj = {
+                "type": "ProductRatePlanCharge",
+                "Name": ch.get("name", f"Charge {ch_idx + 1}"),
+                "ProductRatePlanId": f"@{{ProductRatePlan[{rp_idx}].Id}}",
+                "ChargeModel": ch.get("model", ch.get("chargeModel", "FlatFee")),
+                "ChargeType": ch.get("type", ch.get("chargeType", "Recurring")),
+            }
+
+            # Optional charge fields
+            if ch.get("billingPeriod"):
+                charge_obj["BillingPeriod"] = ch["billingPeriod"]
+            if ch.get("billingTiming"):
+                charge_obj["BillingTiming"] = ch["billingTiming"]
+            if ch.get("price") is not None:
+                charge_obj["Price"] = ch["price"]
+            if ch.get("uom"):
+                charge_obj["UOM"] = ch["uom"]
+
+            # Tiered pricing support
+            if ch.get("tiers"):
+                charge_obj["ProductRatePlanChargeTierData"] = {
+                    "ProductRatePlanChargeTier": ch["tiers"]
+                }
+
+            objects.append(charge_obj)
+
+    # Create the Commerce API payload
+    commerce_payload = {
+        "payload": {
+            "objects": objects,
+            "_commerce_api_endpoint": "POST /commerce/products",
+            "_commerce_api_method": "POST"
+        },
+        "zuora_api_type": "commerce_product_nested",
+        "payload_id": str(uuid.uuid4())[:8]
+    }
+
+    payloads.append(commerce_payload)
+    tool_context.agent.state.set(PAYLOADS_STATE_KEY, payloads)
+
+    # Generate reference documentation
+    ref_doc = format_payload_with_references(objects)
+
+    output = f"""<h3>Commerce API Product Payload Created</h3>
+
+<p><strong>Product:</strong> {product_name} (SKU: {sku})</p>
+<p><strong>Rate Plans:</strong> {len(rate_plans)}</p>
+<p><strong>Total Objects:</strong> {len(objects)}</p>
+
+<h4>API Endpoint</h4>
+<p><code>POST /commerce/products</code></p>
+
+{ref_doc}
+
+<h4>Next Steps</h4>
+<ol>
+  <li>Review the payload in <code>zuora_api_payloads</code></li>
+  <li>Execute the payload against the Zuora Commerce API</li>
+  <li>Use the returned IDs to create subscriptions</li>
+</ol>
+
+<p><em>Note: The @{{Reference.Id}} placeholders will be resolved by Zuora when the product is created.</em></p>"""
+
+    return output
+
+
+@tool(context=True)
+def create_charge_with_dynamic_pricing(
+    tool_context: ToolContext,
+    rate_plan_id: str,
+    charge_name: str,
+    charge_type: Literal["Recurring", "OneTime", "Usage"],
+    charge_model: Literal["FlatFee", "PerUnit", "Tiered", "Volume"] = "FlatFee",
+    pricing_formula: Optional[str] = None,
+    default_price: float = 0.0,
+    billing_period: Optional[str] = None,
+    billing_timing: str = "InAdvance",
+    uom: Optional[str] = None
+) -> str:
+    """
+    Create a charge with Dynamic Pricing using Commerce API.
+
+    Dynamic Pricing allows fieldLookup() expressions for customer-specific pricing.
+
+    Args:
+        rate_plan_id: Parent rate plan ID
+        charge_name: Name of the charge
+        charge_type: Charge type - Recurring, OneTime, or Usage
+        charge_model: Pricing model - FlatFee, PerUnit, Tiered, or Volume
+        pricing_formula: fieldLookup expression, e.g., "fieldLookup('Account.Price__c')"
+        default_price: Fallback price when dynamic lookup fails
+        billing_period: Billing period (Month, Quarter, Annual, etc.) - required for Recurring
+        billing_timing: When to bill (InAdvance, InArrears)
+        uom: Unit of measure (required for Usage charges)
+
+    Returns:
+        HTML-formatted confirmation with dynamic pricing configuration.
+    """
+    payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
+
+    charge_payload = {
+        "Name": charge_name,
+        "ProductRatePlanId": rate_plan_id,
+        "ChargeModel": charge_model,
+        "ChargeType": charge_type,
+        "BillingTiming": billing_timing,
+    }
+
+    if billing_period:
+        charge_payload["BillingPeriod"] = billing_period
+
+    if uom:
+        charge_payload["UOM"] = uom
+
+    # Add dynamic pricing configuration
+    if pricing_formula:
+        charge_payload["Price"] = pricing_formula
+        charge_payload["_dynamic_pricing"] = {
+            "pricingType": "Dynamic",
+            "formula": pricing_formula,
+            "defaultPrice": default_price
+        }
+    else:
+        charge_payload["Price"] = default_price
+
+    commerce_payload = {
+        "payload": {
+            "charge": charge_payload,
+            "_commerce_api_endpoint": "POST /commerce/product-rate-plan-charges",
+            "_commerce_api_method": "POST"
+        },
+        "zuora_api_type": "commerce_charge_dynamic_pricing",
+        "payload_id": str(uuid.uuid4())[:8]
+    }
+
+    payloads.append(commerce_payload)
+    tool_context.agent.state.set(PAYLOADS_STATE_KEY, payloads)
+
+    pricing_display = pricing_formula if pricing_formula else f"${default_price}"
+
+    output = f"""<h3>Dynamic Pricing Charge Payload Created</h3>
+
+<p><strong>Charge Name:</strong> {charge_name}</p>
+<p><strong>Rate Plan ID:</strong> <code>{rate_plan_id}</code></p>
+<p><strong>Charge Type:</strong> {charge_type}</p>
+<p><strong>Charge Model:</strong> {charge_model}</p>
+<p><strong>Pricing:</strong> <code>{pricing_display}</code></p>
+
+<h4>API Endpoint</h4>
+<p><code>POST /commerce/product-rate-plan-charges</code></p>
+
+<h4>Dynamic Pricing Configuration</h4>
+<ul>
+  <li><strong>Formula:</strong> <code>{pricing_formula or 'None (static price)'}</code></li>
+  <li><strong>Default Price:</strong> ${default_price}</li>
+</ul>
+
+<h4>How Dynamic Pricing Works</h4>
+<ol>
+  <li>At subscription creation/amendment, Zuora evaluates the <code>fieldLookup()</code> expression</li>
+  <li>The expression retrieves the value from the specified Account/Subscription custom field</li>
+  <li>If the field is empty or the lookup fails, the default price is used</li>
+</ol>
+
+<p><em>Example: <code>fieldLookup('Account.CustomerPrice__c')</code> reads the CustomerPrice__c field from the Account.</em></p>"""
+
+    return output
 
 
 # ============ Billing Architect Advisory Tools ============
