@@ -150,7 +150,7 @@ def create_agent(persona: str) -> Agent:
     Create an agent configured for the specified persona.
 
     Args:
-        persona: The persona type ("ProjectManager" or "BillingArchitect")
+        persona: The persona type ("ProductManager" or "BillingArchitect")
 
     Returns:
         Agent instance configured with appropriate system prompt and tools
@@ -166,7 +166,7 @@ def create_agent(persona: str) -> Agent:
             system_prompt=BILLING_ARCHITECT_SYSTEM_PROMPT,
             tools=SHARED_TOOLS + BILLING_ARCHITECT_TOOLS,
         )
-    else:  # Default to ProjectManager
+    else:  # Default to ProductManager
         return Agent(
             model=model,
             system_prompt=PROJECT_MANAGER_SYSTEM_PROMPT,

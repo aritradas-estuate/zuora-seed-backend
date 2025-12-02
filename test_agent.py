@@ -24,7 +24,7 @@ def test_pm_bundle_starter_suite():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": 'Create a bundle called "Starter Suite" that combines Core CRM and Analytics Pro together at $199 per month.',
         "conversation_id": "pm-bundle-001"
     }
@@ -42,7 +42,7 @@ def test_pm_tiered_data_transfer():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": 'Create a "Data Transfer" plan with tiered pricing per GB: 0-10 TB @ $0.09/GB, 10-50 TB @ $0.07/GB, 50 TB+ @ $0.05/GB.',
         "conversation_id": "pm-tiered-001"
     }
@@ -60,7 +60,7 @@ def test_pm_volume_seat_licensing():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": 'Create "Seat Licensing" with volume pricing per seat: 1-10 @ $20, 11-50 @ $18, 51+ @ $15 per month.',
         "conversation_id": "pm-volume-001"
     }
@@ -78,7 +78,7 @@ def test_pm_usage_sms_pack():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": 'Create "SMS Pack": $49/month base includes 1,000 SMS, overage $0.015/SMS after that.',
         "conversation_id": "pm-sms-001"
     }
@@ -96,7 +96,7 @@ def test_pm_multicurrency_premium_support():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": 'Create "Premium Support" with $299/month and a one-time setup fee of $999. Add USD & EUR (EUR price €279, setup €949).',
         "conversation_id": "pm-multicurrency-001"
     }
@@ -114,7 +114,7 @@ def test_pm_ramp_growth_bundle():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": 'Create "Growth Bundle (Ramp)": Months 1-3 @ $100/mo, Months 4-6 @ $150/mo, Months 7-12 @ $200/mo; then auto-renew at $200/mo.',
         "conversation_id": "pm-ramp-001"
     }
@@ -132,7 +132,7 @@ def test_pm_prepaid_api_credits():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": 'Create "API Credits Wallet" with monthly prepayment $500 that loads 100,000 API_CALL credits into a wallet. Allow auto top-up and overage when credits run out. Support USD & EUR.',
         "conversation_id": "pm-prepaid-001"
     }
@@ -154,7 +154,7 @@ def test_pm_1_connect_gate():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": "Connect me to our Zuora sandbox for write operations and confirm OAuth is active. If not connected, block create/update actions and prompt me to authenticate.",
         "conversation_id": "pm-1-connect"
     }
@@ -172,7 +172,7 @@ def test_pm_2_guided_creation():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": """Let's create a new product and catalog structure.
 
 Product: Pro Starter
@@ -204,7 +204,7 @@ def test_pm_3_oneshot_clarifications():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": """Add a product "Pro Starter EU" with a monthly base fee and a usage add-on for API calls. Price the base at 49 and usage at 0.003 after 10k included.
 
 Assume nothing else. Ask me to confirm:
@@ -229,7 +229,7 @@ def test_pm_4_tenant_checks():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": 'Create product "Pro Global" with currencies USD and GBP, and a usage UOM named api_calls (plural). If GBP or api_calls aren\'t enabled in this tenant, propose safe auto-fixes (enable GBP, normalize UOM to api_call), show what will change, and re-validate before planning.',
         "conversation_id": "pm-4-tenant"
     }
@@ -247,7 +247,7 @@ def test_pm_5_business_rules_edge():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": """Create "Pro Hybrid" with:
 - Base recurring $49 (no billing period specified on purpose)
 - Usage tiered pricing: 1-10k at $0.004, 10,001-50k at $0.0035, then $0.003 beyond
@@ -268,7 +268,7 @@ def test_pm_6_duplicate_names():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": 'Create "Pro Suite Enterprise Limited Introductory Edition 2026 - Super Long Name" with two rate plans both named "Base". Enforce unique names and length limits; propose truncated names and "Base (1)/(2)". Show the diff, then proceed if I approve.',
         "conversation_id": "pm-6-duplicates"
     }
@@ -286,7 +286,7 @@ def test_pm_7_execute():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": "Everything looks good—execute: create the product, both rate plans, and charges. Return success with links to the created Product and Rate Plans in the tenant.",
         "conversation_id": "pm-7-execute"
     }
@@ -327,7 +327,7 @@ def test_chat_api_basic():
     """Basic Chat API tests."""
     print("\n--- Chat API Test 1: Simple message (no payloads) ---")
     request_1 = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": "What can you help me with?",
         "conversation_id": "test-conv-001"
     }
@@ -339,7 +339,7 @@ def test_chat_api_basic():
 
     print("\n--- Chat API Test 2: With product payload ---")
     request_2 = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": "Please update the product name to 'Gold Tier Premium'",
         "conversation_id": "test-conv-002",
         "zuora_api_payloads": [
@@ -372,7 +372,7 @@ def test_zuora_connect():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": "Connect me to our Zuora sandbox for write operations and confirm OAuth is active.",
         "conversation_id": "zuora-connect-001"
     }
@@ -390,7 +390,7 @@ def test_zuora_view_all_products():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": "Show me all products in the catalog.",
         "conversation_id": "zuora-view-all-001"
     }
@@ -408,7 +408,7 @@ def test_zuora_view_specific_product():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": "I want to view details of a specific product. The product name is 'Solar Plan Premium'.",
         "conversation_id": "zuora-view-specific-001"
     }
@@ -426,7 +426,7 @@ def test_zuora_view_rate_plans():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": "Show me the rate plans and charges for 'Solar Plan Premium'.",
         "conversation_id": "zuora-view-rp-001"
     }
@@ -444,7 +444,7 @@ def test_zuora_update_product_name():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": "I want to update the product 'Solar Plan Basic'. Change the name to 'Solar Plan Premium'.",
         "conversation_id": "zuora-update-name-001"
     }
@@ -462,7 +462,7 @@ def test_zuora_update_product_date():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": "Update the end date of 'Solar Plan Basic' to 2027-12-31.",
         "conversation_id": "zuora-update-date-001"
     }
@@ -480,7 +480,7 @@ def test_zuora_update_charge_price():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": "I need to update the 'Base Charge' price from $1,200 to $1,350 per year.",
         "conversation_id": "zuora-update-price-001"
     }
@@ -498,7 +498,7 @@ def test_zuora_update_charge_model_restricted():
     print("=" * 60)
 
     request = {
-        "persona": "ProjectManager",
+        "persona": "ProductManager",
         "message": "I want to change the charge model from Flat Fee Pricing to Tiered Pricing.",
         "conversation_id": "zuora-update-model-001"
     }

@@ -48,7 +48,7 @@ def generate_mock_citations(persona: str) -> List[Citation]:
             )
         ]
     else:
-        # Default citations for ProjectManager and other personas
+        # Default citations for ProductManager and other personas
         return [
             Citation(
                 id="citation-mock-1",
@@ -63,11 +63,11 @@ def generate_mock_citations(persona: str) -> List[Citation]:
 def invoke(payload: dict) -> dict:
     """
     AgentCore entry point for Zuora Seed Agent with /chat API contract.
-    Supports multiple personas: ProjectManager, BillingArchitect
+    Supports multiple personas: ProductManager, BillingArchitect
 
     Expected payload (ChatRequest):
     {
-        "persona": "ProjectManager" | "BillingArchitect",
+        "persona": "ProductManager" | "BillingArchitect",
         "message": "I want to create a product called Gold Tier",
         "conversation_id": "1234",
         "zuora_api_payloads": [

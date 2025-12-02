@@ -75,7 +75,7 @@ class Citation(BaseModel):
 
 class ChatRequest(BaseModel):
     """Request model for POST /chat endpoint."""
-    persona: str = Field(..., description="User persona making the request (e.g., 'ProjectManager')")
+    persona: str = Field(..., description="User persona making the request (e.g., 'ProductManager')")
     message: str = Field(..., description="User's message/question")
     conversation_id: Optional[str] = Field(None, description="Conversation ID for session continuity")
     zuora_api_payloads: List[ZuoraApiPayload] = Field(
@@ -102,7 +102,7 @@ class ChatResponse(BaseModel):
 
 class PersonaType(str, Enum):
     """Available persona types."""
-    PROJECT_MANAGER = "ProjectManager"
+    PROJECT_MANAGER = "ProductManager"
     BILLING_ARCHITECT = "BillingArchitect"
 
 
