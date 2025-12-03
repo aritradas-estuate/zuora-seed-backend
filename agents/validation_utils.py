@@ -59,7 +59,14 @@ def validate_date_range(start_date: str, end_date: str) -> Tuple[bool, Optional[
 
 def validate_zuora_id(id_str: str, id_type: str = "ID") -> Tuple[bool, Optional[str]]:
     """
-    Validate Zuora ID format.
+    Validate Zuora ID or object reference format.
+
+    Accepts:
+    - Real Zuora IDs: alphanumeric strings (e.g., '8a1234567890abcd')
+    - Object references: @{Object.Id} or @{Object[index].Id}
+      - @{Product.Id}, @{Product[0].Id}
+      - @{ProductRatePlan.Id}, @{ProductRatePlan[0].Id}
+      - @{ProductRatePlanCharge.Id}, @{ProductRatePlanCharge[0].Id}
 
     Args:
         id_str: ID string to validate
@@ -69,12 +76,59 @@ def validate_zuora_id(id_str: str, id_type: str = "ID") -> Tuple[bool, Optional[
         Tuple of (is_valid, error_message)
         error_message is None if valid
     """
-    if not id_str or len(id_str) < 10:
+    if not id_str:
         return (
             False,
-            f"Invalid {id_type}. Provide valid Zuora ID (e.g., '8a1234567890abcd')",
+            f"Invalid {id_type}. Provide valid Zuora ID or object reference",
         )
+
+    # Check for object reference syntax: @{Object.Id} or @{Object[index].Id}
+    if id_str.startswith("@{") and id_str.endswith("}"):
+        # Valid patterns:
+        # @{Product.Id}, @{Product[0].Id}
+        # @{ProductRatePlan.Id}, @{ProductRatePlan[0].Id}
+        # @{ProductRatePlanCharge.Id}, @{ProductRatePlanCharge[0].Id}
+        pattern = (
+            r"^@\{(Product|ProductRatePlan|ProductRatePlanCharge)(\[\d+\])?\.Id\}$"
+        )
+        if re.match(pattern, id_str):
+            return True, None
+        else:
+            return (
+                False,
+                f"Invalid object reference format. Use @{{Object[index].Id}} (e.g., '@{{Product[0].Id}}')",
+            )
+
+    # Otherwise validate as Zuora ID (alphanumeric, typically 32 chars but can vary)
+    # Must be at least 8 characters and alphanumeric (allowing hyphens)
+    if len(id_str) < 8:
+        return (
+            False,
+            f"Invalid {id_type}. Provide valid Zuora ID (e.g., '8a1234567890abcd') or object reference (e.g., '@{{Product[0].Id}}')",
+        )
+
+    if not id_str.replace("-", "").isalnum():
+        return (
+            False,
+            f"Invalid {id_type}. Zuora IDs must be alphanumeric",
+        )
+
     return True, None
+
+
+def is_object_reference(id_str: str) -> bool:
+    """
+    Check if the given string is a Zuora object reference.
+
+    Args:
+        id_str: ID string to check
+
+    Returns:
+        True if it's an object reference (@{Object.Id} format), False otherwise
+    """
+    if not id_str:
+        return False
+    return id_str.startswith("@{") and id_str.endswith("}")
 
 
 def validate_sku_format(sku: str) -> Tuple[bool, Optional[str]]:

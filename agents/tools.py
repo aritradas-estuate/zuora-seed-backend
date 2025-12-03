@@ -14,18 +14,111 @@ from .validation_schemas import (
     format_placeholder_warning,
 )
 from .validation_utils import (
-    validate_date_format,
-    validate_date_range,
-    validate_zuora_id,
-    validate_sku_format,
+    validate_date_format as _validate_date_format_tuple,
+    validate_date_range as _validate_date_range_tuple,
+    validate_zuora_id as _validate_zuora_id_tuple,
+    validate_sku_format as _validate_sku_format_tuple,
     format_error_message,
+    is_object_reference,
 )
+
+
+# Wrapper functions that return just booleans for backward compatibility
+def validate_date_format(date_str: str) -> bool:
+    """Validate date is in YYYY-MM-DD format. Returns True if valid."""
+    result, _ = _validate_date_format_tuple(date_str)
+    return result
+
+
+def validate_date_range(start_date: str, end_date: str) -> bool:
+    """Validate end_date is after start_date. Returns True if valid."""
+    result, _ = _validate_date_range_tuple(start_date, end_date)
+    return result
+
+
+def validate_zuora_id(id_str: str) -> bool:
+    """Validate Zuora ID or object reference format. Returns True if valid."""
+    result, _ = _validate_zuora_id_tuple(id_str)
+    return result
+
+
+def validate_sku_format(sku: str) -> bool:
+    """Validate SKU format. Returns True if valid."""
+    result, _ = _validate_sku_format_tuple(sku)
+    return result
 
 
 # Note: REQUIRED_FIELDS schema and validation functions moved to:
 # - validation_schemas.py (schema and validation logic)
 # - validation_utils.py (common validation utilities)
 # All functions are imported at the top of this file
+
+
+# ============ Object Reference Helpers ============
+
+
+def _count_payloads_by_type(payloads: List[Dict[str, Any]], api_type: str) -> int:
+    """Count the number of payloads of a specific type."""
+    return len([p for p in payloads if p.get("zuora_api_type") == api_type])
+
+
+def _get_product_object_reference(
+    payloads: List[Dict[str, Any]], product_index: Optional[int] = None
+) -> Optional[str]:
+    """
+    Generate a product object reference for batch execution.
+
+    Args:
+        payloads: Current list of payloads in state
+        product_index: Specific product index to reference. If None, auto-determines based on count.
+
+    Returns:
+        Object reference string like "@{Product[0].Id}" or None if no products exist
+    """
+    product_count = _count_payloads_by_type(payloads, "product_create")
+
+    if product_count == 0:
+        return None
+
+    if product_index is not None:
+        if product_index < product_count:
+            return f"@{{Product[{product_index}].Id}}"
+        else:
+            return None
+
+    # Auto-determine: if only one product, use index 0
+    if product_count == 1:
+        return "@{Product[0].Id}"
+
+    # Multiple products - cannot auto-determine, return None to trigger placeholder
+    return None
+
+
+def _get_rate_plan_object_reference(
+    payloads: List[Dict[str, Any]], rate_plan_index: Optional[int] = None
+) -> Optional[str]:
+    """
+    Generate a rate plan object reference for batch execution.
+
+    Args:
+        payloads: Current list of payloads in state
+        rate_plan_index: Specific rate plan index to reference. If None, returns the next sequential index.
+
+    Returns:
+        Object reference string like "@{ProductRatePlan[0].Id}" or None if no rate plans exist
+    """
+    rate_plan_count = _count_payloads_by_type(payloads, "rate_plan_create")
+
+    if rate_plan_index is not None:
+        # Use specific index if provided
+        return f"@{{ProductRatePlan[{rate_plan_index}].Id}}"
+
+    if rate_plan_count == 0:
+        return None
+
+    # Return reference to the most recently created rate plan
+    # (This is the common case: create rate plan, then create charge for it)
+    return f"@{{ProductRatePlan[{rate_plan_count - 1}].Id}}"
 
 
 # ============ Utility Tools ============
@@ -678,16 +771,18 @@ def create_product(
 ) -> str:
     """Generate payload to create new product. Missing fields will use smart defaults.
 
-    Per Zuora v1 API, both effectiveStartDate and effectiveEndDate are required.
+    Per Zuora v1 API, both EffectiveStartDate and EffectiveEndDate are required.
     Smart defaults:
-    - effectiveStartDate: today's date if not provided
-    - effectiveEndDate: 10 years from start date if not provided
+    - EffectiveStartDate: today's date if not provided
+    - EffectiveEndDate: 10 years from start date if not provided
+
+    Uses PascalCase field names to match Zuora v1 CRUD API.
     """
     from datetime import datetime
     from dateutil.relativedelta import relativedelta
 
-    # Build product payload with provided values
-    payload_data = {"name": name}
+    # Build product payload with provided values - use PascalCase for Zuora v1 CRUD API
+    payload_data = {"Name": name}
 
     # Apply smart defaults for common fields
     if not effective_start_date:
@@ -701,9 +796,9 @@ def create_product(
                 "Invalid date format",
                 f"effective_start_date must be YYYY-MM-DD format (e.g., 2024-01-01), got: {effective_start_date}",
             )
-        payload_data["effectiveStartDate"] = effective_start_date
+        payload_data["EffectiveStartDate"] = effective_start_date
 
-    # effectiveEndDate is required by Zuora v1 API - apply smart default
+    # EffectiveEndDate is required by Zuora v1 API - apply smart default
     if not effective_end_date:
         # Default to 10 years from start date
         start_dt = datetime.strptime(effective_start_date, "%Y-%m-%d")
@@ -722,7 +817,7 @@ def create_product(
                 "Invalid date range",
                 "effective_end_date must be after effective_start_date",
             )
-        payload_data["effectiveEndDate"] = effective_end_date
+        payload_data["EffectiveEndDate"] = effective_end_date
 
     if sku:
         if not validate_sku_format(sku):
@@ -730,10 +825,10 @@ def create_product(
                 "Invalid SKU format",
                 "Use only alphanumeric characters, hyphens, and underscores",
             )
-        payload_data["sku"] = sku
+        payload_data["SKU"] = sku
 
     if description:
-        payload_data["description"] = description
+        payload_data["Description"] = description
 
     # Delegate to create_payload which handles placeholders and validation
     return create_payload(tool_context, "product_create", payload_data)
@@ -743,29 +838,55 @@ def create_product(
 def create_rate_plan(
     tool_context: ToolContext,
     product_id: Optional[str] = None,
+    product_index: Optional[int] = None,
     name: Optional[str] = None,
     description: Optional[str] = None,
     effective_start_date: Optional[str] = None,
     effective_end_date: Optional[str] = None,
 ) -> str:
-    """Generate payload to create rate plan for a product. Missing fields will use placeholders."""
+    """Generate payload to create rate plan for a product.
+
+    For batch creation (creating product and rate plan together), use object references:
+    - If product_index is provided, generates @{Product[index].Id}
+    - If neither product_id nor product_index provided, auto-generates reference if single product in batch
+    - For existing Zuora products, use product_id with the actual Zuora ID
+
+    Args:
+        product_id: Zuora product ID OR object reference (e.g., '@{Product[0].Id}')
+        product_index: Index of product in current batch (0-based) to auto-generate object reference
+        name: Rate plan name
+        description: Rate plan description
+        effective_start_date: Start date (YYYY-MM-DD)
+        effective_end_date: End date (YYYY-MM-DD)
+    """
     # Build rate plan payload with provided values
     payload_data = {}
 
+    # Handle ProductId - use PascalCase for Zuora v1 CRUD API
     if product_id:
-        # Basic validation if provided
+        # Validate if it's a real Zuora ID or object reference
         if not validate_zuora_id(product_id):
             return format_error_message(
                 "Invalid product_id",
-                "Provide a valid Zuora product ID (e.g., '8a1234567890abcd')",
+                "Provide a valid Zuora product ID (e.g., '8a1234567890abcd') or object reference (e.g., '@{Product[0].Id}')",
             )
-        payload_data["productId"] = product_id
+        payload_data["ProductId"] = product_id
+    elif product_index is not None:
+        # Generate object reference from explicit index
+        payload_data["ProductId"] = f"@{{Product[{product_index}].Id}}"
+    else:
+        # Try to auto-generate object reference based on products in current batch
+        payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
+        object_ref = _get_product_object_reference(payloads)
+        if object_ref:
+            payload_data["ProductId"] = object_ref
+        # If no object_ref, ProductId will be missing and create_payload will add a placeholder
 
     if name:
-        payload_data["name"] = name
+        payload_data["Name"] = name
 
     if description:
-        payload_data["description"] = description
+        payload_data["Description"] = description
 
     if effective_start_date:
         if not validate_date_format(effective_start_date):
@@ -773,7 +894,7 @@ def create_rate_plan(
                 "Invalid date format",
                 f"effective_start_date must be YYYY-MM-DD format, got: {effective_start_date}",
             )
-        payload_data["effectiveStartDate"] = effective_start_date
+        payload_data["EffectiveStartDate"] = effective_start_date
 
     if effective_end_date:
         if not validate_date_format(effective_end_date):
@@ -789,7 +910,7 @@ def create_rate_plan(
                 "Invalid date range",
                 "effective_end_date must be after effective_start_date",
             )
-        payload_data["effectiveEndDate"] = effective_end_date
+        payload_data["EffectiveEndDate"] = effective_end_date
 
     # Delegate to create_payload which handles placeholders and validation
     return create_payload(tool_context, "rate_plan_create", payload_data)
@@ -862,6 +983,7 @@ def _infer_charge_model_conservative(
 def create_charge(
     tool_context: ToolContext,
     rate_plan_id: Optional[str] = None,
+    rate_plan_index: Optional[int] = None,
     name: Optional[str] = None,
     charge_type: Optional[Literal["Recurring", "OneTime", "Usage"]] = None,
     charge_model: Optional[str] = None,
@@ -885,40 +1007,71 @@ def create_charge(
 ) -> str:
     """Generate charge creation payload per Zuora v1 API schema.
 
+    For batch creation (creating rate plan and charge together), use object references:
+    - If rate_plan_index is provided, generates @{ProductRatePlan[index].Id}
+    - If neither rate_plan_id nor rate_plan_index provided, auto-generates reference to most recent rate plan
+    - For existing Zuora rate plans, use rate_plan_id with the actual Zuora ID
+
     Required fields per Zuora API:
-    - name, productRatePlanId, chargeModel, chargeType
-    - billCycleType, billingPeriod, triggerEvent
-    - productRatePlanChargeTierData (pricing container)
+    - Name, ProductRatePlanId, ChargeModel, ChargeType
+    - BillCycleType, BillingPeriod, TriggerEvent
+    - ProductRatePlanChargeTierData (pricing container)
 
     Smart defaults applied:
-    - billCycleType: DefaultFromCustomer
-    - triggerEvent: ContractEffective
-    - billingTiming: In Advance
-    - billingPeriod: Month (for Recurring charges)
-    - currency: USD
+    - BillCycleType: DefaultFromCustomer
+    - TriggerEvent: ContractEffective
+    - BillingTiming: In Advance
+    - BillingPeriod: Month (for Recurring charges)
+    - Currency: USD
 
-    charge_model accepts simplified names (e.g., 'FlatFee', 'PerUnit') which are
-    automatically converted to Zuora API values ('Flat Fee Pricing', 'Per Unit Pricing').
+    Args:
+        rate_plan_id: Zuora rate plan ID OR object reference (e.g., '@{ProductRatePlan[0].Id}')
+        rate_plan_index: Index of rate plan in current batch (0-based) to auto-generate object reference
+        name: Charge name
+        charge_type: OneTime, Recurring, or Usage
+        charge_model: Pricing model (accepts simplified names like 'FlatFee' or full names like 'Flat Fee Pricing')
+        price: Price amount
+        billing_period: Month, Quarter, Annual, etc.
+        billing_timing: In Advance or In Arrears
+        bill_cycle_type: When to bill
+        trigger_event: When to start billing
+        uom: Unit of measure for usage charges
+        description: Charge description
+        currency: Currency code (default: USD)
     """
-    # Build charge payload with provided values
+    # Build charge payload with provided values - use PascalCase for Zuora v1 CRUD API
     payload_data = {}
 
+    # Handle ProductRatePlanId
     if rate_plan_id:
         if not validate_zuora_id(rate_plan_id):
             return format_error_message(
-                "Invalid rate_plan_id", "Provide a valid Zuora rate plan ID"
+                "Invalid rate_plan_id",
+                "Provide a valid Zuora rate plan ID (e.g., '8a1234567890abcd') or object reference (e.g., '@{ProductRatePlan[0].Id}')",
             )
-        payload_data["productRatePlanId"] = rate_plan_id
+        payload_data["ProductRatePlanId"] = rate_plan_id
+    elif rate_plan_index is not None:
+        # Generate object reference from explicit index
+        payload_data["ProductRatePlanId"] = (
+            f"@{{ProductRatePlan[{rate_plan_index}].Id}}"
+        )
+    else:
+        # Try to auto-generate object reference based on rate plans in current batch
+        payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
+        object_ref = _get_rate_plan_object_reference(payloads)
+        if object_ref:
+            payload_data["ProductRatePlanId"] = object_ref
+        # If no object_ref, ProductRatePlanId will be missing and create_payload will add a placeholder
 
     if name:
-        payload_data["name"] = name
+        payload_data["Name"] = name
 
     if charge_type:
-        payload_data["chargeType"] = charge_type
+        payload_data["ChargeType"] = charge_type
 
     if charge_model:
         # Normalize charge model to Zuora API value
-        payload_data["chargeModel"] = _normalize_charge_model(charge_model)
+        payload_data["ChargeModel"] = _normalize_charge_model(charge_model)
     else:
         # Try conservative inference when charge_model is not explicitly provided
         inferred_model = _infer_charge_model_conservative(
@@ -928,39 +1081,39 @@ def create_charge(
             name=name,
         )
         if inferred_model:
-            payload_data["chargeModel"] = inferred_model
+            payload_data["ChargeModel"] = inferred_model
 
     # Required fields with smart defaults (per Zuora v1 API)
-    payload_data["billCycleType"] = bill_cycle_type
-    payload_data["triggerEvent"] = trigger_event
-    payload_data["billingTiming"] = billing_timing
+    payload_data["BillCycleType"] = bill_cycle_type
+    payload_data["TriggerEvent"] = trigger_event
+    payload_data["BillingTiming"] = billing_timing
 
     if description:
-        payload_data["description"] = description
+        payload_data["Description"] = description
 
     # Billing period - required, default to Month for recurring
     if billing_period:
-        payload_data["billingPeriod"] = billing_period
+        payload_data["BillingPeriod"] = billing_period
     elif charge_type == "Recurring":
-        payload_data["billingPeriod"] = "Month"
+        payload_data["BillingPeriod"] = "Month"
 
     if uom:
-        payload_data["uom"] = uom
+        payload_data["UOM"] = uom
 
-    # Build productRatePlanChargeTierData (required per Zuora API)
+    # Build ProductRatePlanChargeTierData (required per Zuora API)
     # This is the container for pricing information
     if price is not None:
-        payload_data["productRatePlanChargeTierData"] = {
-            "productRatePlanChargeTier": [
+        payload_data["ProductRatePlanChargeTierData"] = {
+            "ProductRatePlanChargeTier": [
                 {
-                    "currency": currency,
-                    "price": price,
+                    "Currency": currency,
+                    "Price": price,
                 }
             ]
         }
 
     # Delegate to create_payload which handles placeholders and validation
-    # It will add placeholders for conditionally required fields based on chargeType
+    # It will add placeholders for conditionally required fields based on ChargeType
     return create_payload(tool_context, "charge_create", payload_data)
 
 

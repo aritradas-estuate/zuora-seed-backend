@@ -53,12 +53,12 @@ def test_partial_product_creation():
         payload = payloads[0]
         data = payload.get("payload", {})
 
-        # Verify smart defaults were applied
-        assert "effectiveStartDate" in data, (
-            "Should have effectiveStartDate from smart default"
+        # Verify smart defaults were applied (PascalCase for Zuora v1 API)
+        assert "EffectiveStartDate" in data, (
+            "Should have EffectiveStartDate from smart default"
         )
-        assert "effectiveEndDate" in data, (
-            "Should have effectiveEndDate from smart default"
+        assert "EffectiveEndDate" in data, (
+            "Should have EffectiveEndDate from smart default"
         )
 
         # No placeholders needed since smart defaults fill required fields
@@ -136,10 +136,10 @@ def test_partial_rate_plan_creation():
         data = payload.get("payload", {})
         placeholders = payload.get("_placeholders", [])
 
-        # Check for productId placeholder (either in _placeholders list or as placeholder string in data)
+        # Check for ProductId placeholder (PascalCase for Zuora v1 API)
         has_product_id_placeholder = (
-            "productId" in placeholders
-            or "<<PLACEHOLDER" in str(data.get("productId", ""))
+            "ProductId" in placeholders
+            or "<<PLACEHOLDER" in str(data.get("ProductId", ""))
         )
         assert has_product_id_placeholder, (
             "Should have placeholder for missing product ID"
@@ -183,24 +183,24 @@ def test_partial_charge_creation():
         data = payload.get("payload", {})
         placeholders = payload.get("_placeholders", [])
 
-        # Check that smart defaults were applied
-        assert data.get("billCycleType") == "DefaultFromCustomer", (
-            "Should have billCycleType default"
+        # Check that smart defaults were applied (PascalCase for Zuora v1 API)
+        assert data.get("BillCycleType") == "DefaultFromCustomer", (
+            "Should have BillCycleType default"
         )
-        assert data.get("triggerEvent") == "ContractEffective", (
-            "Should have triggerEvent default"
+        assert data.get("TriggerEvent") == "ContractEffective", (
+            "Should have TriggerEvent default"
         )
-        assert data.get("billingPeriod") == "Month", (
-            "Should have billingPeriod default for Recurring"
+        assert data.get("BillingPeriod") == "Month", (
+            "Should have BillingPeriod default for Recurring"
         )
 
-        # Check for placeholders on fields without smart defaults
+        # Check for placeholders on fields without smart defaults (PascalCase)
         has_required_placeholders = (
-            "productRatePlanId" in placeholders
-            or "<<PLACEHOLDER" in str(data.get("productRatePlanId", ""))
+            "ProductRatePlanId" in placeholders
+            or "<<PLACEHOLDER" in str(data.get("ProductRatePlanId", ""))
         )
         assert has_required_placeholders, (
-            "Should have placeholders for productRatePlanId"
+            "Should have placeholders for ProductRatePlanId"
         )
         print(f"\n✅ Test passed: Placeholders generated: {placeholders}")
 
@@ -232,38 +232,38 @@ def test_update_payload_removes_placeholder():
         payloads = response1.get("zuora_api_payloads", [])
         assert len(payloads) > 0, "Should create payload"
 
-        # Check for placeholder (either in _placeholders list or as placeholder string)
+        # Check for placeholder (either in _placeholders list or as placeholder string) - PascalCase
         payload = payloads[0]
         data = payload.get("payload", {})
         placeholders = payload.get("_placeholders", [])
         has_placeholder = len(placeholders) > 0 or "<<PLACEHOLDER" in str(
-            data.get("productId", "")
+            data.get("ProductId", "")
         )
-        assert has_placeholder, "Should have placeholder for productId"
+        assert has_placeholder, "Should have placeholder for ProductId"
 
-        # Now update the productId field
+        # Now update the ProductId field (PascalCase)
         request2 = {
             "persona": "ProductManager",
-            "message": "Update the rate plan payload, set productId to '8a1234567890abcd'",
+            "message": "Update the rate plan payload, set ProductId to '8a1234567890abcd'",
             "conversation_id": "test-placeholder-005",
             "zuora_api_payloads": payloads,
         }
 
         response2 = invoke(request2)
-        print_response("Step 2: Update productId field", response2)
+        print_response("Step 2: Update ProductId field", response2)
 
         updated_payloads = response2.get("zuora_api_payloads", [])
         assert len(updated_payloads) > 0, "Should have updated payload"
 
-        # Check if productId placeholder was removed
+        # Check if ProductId placeholder was removed (PascalCase)
         updated_payload = updated_payloads[0]
         updated_data = updated_payload.get("payload", {})
         updated_placeholders = updated_payload.get("_placeholders", [])
 
-        # productId should no longer be a placeholder
-        product_id_value = updated_data.get("productId", "")
+        # ProductId should no longer be a placeholder
+        product_id_value = updated_data.get("ProductId", "")
         product_id_is_placeholder = (
-            "productId" in updated_placeholders
+            "ProductId" in updated_placeholders
             or "<<PLACEHOLDER" in str(product_id_value)
         )
 

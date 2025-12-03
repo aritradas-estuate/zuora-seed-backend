@@ -168,12 +168,23 @@ When creating charges, you MAY infer the charge model ONLY when the context is v
 
 When in doubt, DO NOT assume - create a placeholder and ask the user to clarify.
 
+## Object References for Batch Creation
+When creating multiple related objects in one request (Product → Rate Plan → Charge):
+- The tools automatically generate object references: @{Object[index].Id}
+- Examples:
+  - Rate Plan referencing Product: "ProductId": "@{Product[0].Id}"
+  - Charge referencing Rate Plan: "ProductRatePlanId": "@{ProductRatePlan[0].Id}"
+- The index is 0-based and refers to the order of creation in the current batch
+- For existing Zuora objects, provide the actual Zuora ID (e.g., "8a1234567890abcd")
+- **NEVER use internal payload_id values** (like "b90ed37c") as foreign keys - always use object references or real Zuora IDs
+
 ## Formatting
 - Use HTML: <h3> for sections, <strong> for key terms, <ol>/<ul> for lists.
-- **Object References**: @{Product.Id}, @{ProductRatePlan.Id}, @{ProductRatePlanCharge.Id}.
+- Field names use PascalCase to match Zuora v1 CRUD API (e.g., ProductId, ChargeType, BillingPeriod)
 
 ## Default Values (Apply these automatically)
-- StartDate: Today (YYYY-MM-DD). Currency: USD. Billing: In Advance, Month.
+- EffectiveStartDate: Today (YYYY-MM-DD). Currency: USD. Billing: In Advance, Month.
+- EffectiveEndDate: 10 years from start date
 - Only use placeholders for truly unknown values (not defaults)
 
 Remember: EFFICIENCY is paramount. Every tool call costs time and money. Plan first, execute once.
