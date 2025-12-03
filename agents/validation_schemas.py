@@ -20,6 +20,16 @@ REQUIRED_FIELDS = {
             "EffectiveStartDate": "Start date (YYYY-MM-DD format, e.g., 2024-01-01)",
         },
     },
+    "product_create": {
+        "always": ["name", "effectiveStartDate"],
+        "nested": {},
+        "conditional": {},
+        "descriptions": {
+            "name": "Product name",
+            "effectiveStartDate": "Start date (YYYY-MM-DD format, e.g., 2024-01-01)",
+            "sku": "Product SKU (alphanumeric, hyphens, underscores)",
+        },
+    },
     "product_rate_plan": {
         "always": ["Name", "ProductId"],
         "nested": {},
@@ -27,6 +37,15 @@ REQUIRED_FIELDS = {
         "descriptions": {
             "Name": "Rate plan name",
             "ProductId": "Product ID (use @{Product.Id} to reference a product in the same payload)",
+        },
+    },
+    "rate_plan_create": {
+        "always": ["name", "productId"],
+        "nested": {},
+        "conditional": {},
+        "descriptions": {
+            "name": "Rate plan name",
+            "productId": "Product ID from Zuora (e.g., '8a1234567890abcd')",
         },
     },
     "product_rate_plan_charge": {
@@ -49,6 +68,25 @@ REQUIRED_FIELDS = {
             "UOM": "Unit of measure for usage charges (e.g., API_CALL, GB, SMS)",
             "Price": "Price amount (numeric)",
             "ProductRatePlanChargeTierData": "Tier pricing data for tiered/volume charges",
+        },
+    },
+    "charge_create": {
+        "always": ["name", "productRatePlanId", "chargeModel", "chargeType"],
+        "nested": {},
+        "conditional": {
+            "chargeType=Recurring": ["billingPeriod"],
+            "chargeType=Usage": ["uom"],
+            "chargeModel=FlatFee": ["price"],
+            "chargeModel=PerUnit": ["price"],
+        },
+        "descriptions": {
+            "name": "Charge name",
+            "productRatePlanId": "Rate plan ID from Zuora",
+            "chargeModel": "Pricing model (FlatFee, PerUnit, Tiered, or Volume)",
+            "chargeType": "Charge type (Recurring, OneTime, or Usage)",
+            "billingPeriod": "Billing period for recurring charges (Month, Quarter, Annual)",
+            "uom": "Unit of measure for usage charges (e.g., API_CALL, GB, SMS)",
+            "price": "Price amount (numeric)",
         },
     },
     "account": {
@@ -236,6 +274,108 @@ def format_validation_questions(
     output += "</ol>\n"
     output += (
         "<p><em>Please provide these details and I'll create the payload.</em></p>"
+    )
+
+    return output
+
+
+def generate_placeholder_value(field_name: str, description: str) -> str:
+    """
+    Generate a placeholder string for a missing field.
+
+    Args:
+        field_name: The field name (e.g., "EffectiveStartDate" or "billToContact.firstName")
+        description: The field description
+
+    Returns:
+        Placeholder string in format: <<PLACEHOLDER:FieldName>> or with description
+    """
+    # For conditional fields, description includes the condition
+    if "required because" in description.lower():
+        # Extract just the condition part
+        return f"<<PLACEHOLDER:{field_name} ({description.split('(')[1].strip(')')})>>"
+    else:
+        # Simple placeholder
+        return f"<<PLACEHOLDER:{field_name}>>"
+
+
+def generate_placeholder_payload(
+    api_type: str, payload_data: Dict[str, Any], missing_fields: List[Tuple[str, str]]
+) -> Tuple[Dict[str, Any], List[str]]:
+    """
+    Generate a complete payload with placeholders for missing required fields.
+
+    Args:
+        api_type: The API type (product, account, subscription, etc.)
+        payload_data: The partial payload data
+        missing_fields: List of (field_name, description) tuples for missing fields
+
+    Returns:
+        Tuple of (complete_payload_with_placeholders, list_of_placeholder_fields)
+    """
+    # Start with a copy of the existing payload
+    complete_payload = payload_data.copy()
+    placeholder_list = []
+
+    for field_name, description in missing_fields:
+        placeholder_value = generate_placeholder_value(field_name, description)
+        placeholder_list.append(field_name)
+
+        # Handle nested fields (e.g., "billToContact.firstName")
+        if "." in field_name:
+            parts = field_name.split(".")
+            current = complete_payload
+
+            # Navigate to parent, creating dicts as needed
+            for part in parts[:-1]:
+                if part not in current:
+                    current[part] = {}
+                current = current[part]
+
+            # Set placeholder at the final key
+            current[parts[-1]] = placeholder_value
+        else:
+            # Simple field
+            complete_payload[field_name] = placeholder_value
+
+    return (complete_payload, placeholder_list)
+
+
+def format_placeholder_warning(
+    api_type: str, placeholder_list: List[str], payload: Dict[str, Any]
+) -> str:
+    """
+    Format a user-friendly warning about placeholders in the generated payload.
+
+    Args:
+        api_type: The API type
+        placeholder_list: List of field names that have placeholders
+        payload: The complete payload with placeholders
+
+    Returns:
+        HTML-formatted warning message
+    """
+    import json
+
+    output = f"<h4>✅ Created {api_type} Payload (with placeholders)</h4>\n"
+    output += f"<p>I've generated the payload with <strong>{len(placeholder_list)}</strong> placeholder(s) for missing information:</p>\n"
+    output += "<ul>\n"
+
+    for field in placeholder_list:
+        output += f"  <li><code>{field}</code></li>\n"
+
+    output += "</ul>\n"
+    output += "<p><strong>⚠️ Next Steps:</strong></p>\n"
+    output += "<ol>\n"
+    output += "  <li>Review the payload below</li>\n"
+    output += "  <li>Use <code>update_payload()</code> to replace placeholder values with actual data</li>\n"
+    output += "  <li>Verify all placeholders are resolved before API execution</li>\n"
+    output += "</ol>\n"
+    output += f"<p><strong>Payload ID:</strong> <code>{payload.get('payload_id', 'N/A')}</code></p>\n"
+    output += f"<pre><code>{json.dumps(payload, indent=2)}</code></pre>\n"
+    output += (
+        "<p><em>Tip: Search for '&lt;&lt;PLACEHOLDER' in the payload to find "
+        "values that need to be filled in.</em></p>"
     )
 
     return output

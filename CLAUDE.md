@@ -67,8 +67,43 @@ Tools in `agents/tools.py` use the `@tool` decorator from strands. Key categorie
 
 - **Zuora API (Read)**: `connect_to_zuora`, `list_zuora_products`, `get_zuora_product`, `get_zuora_rate_plan_details`
 - **Zuora API (Write)**: `update_zuora_product`, `update_zuora_rate_plan`, `update_zuora_charge`
+- **Payload Creation**: `create_product`, `create_rate_plan`, `create_charge` - generate payloads with smart defaults and placeholders
 - **Payload Management**: `get_payloads`, `update_payload`, `create_payload` - manipulate JSON payloads in agent state
 - **Billing Architect Advisory**: `generate_prepaid_config`, `generate_workflow_config`, `generate_notification_rule`, `generate_order_payload`, `explain_field_lookup`, `generate_multi_attribute_pricing`
+
+### Placeholder System
+
+The agent generates payloads **immediately** even with incomplete information using placeholders:
+
+#### How It Works
+- When users provide partial information, payloads are created with `<<PLACEHOLDER:FieldName>>` for missing required fields
+- Smart defaults are applied automatically (e.g., today's date for `effectiveStartDate`, USD for currency)
+- Users can fill placeholders iteratively using `update_payload(api_type, field_path, new_value)`
+- Placeholders are automatically removed when fields are updated
+- `get_payloads()` warns about remaining placeholders before execution
+
+#### Example
+```json
+{
+  "payload": {
+    "name": "Analytics Pro",
+    "sku": "<<PLACEHOLDER:sku>>",
+    "effectiveStartDate": "2024-12-03"
+  },
+  "zuora_api_type": "product_create",
+  "payload_id": "abc123",
+  "_placeholders": ["sku"]
+}
+```
+
+#### Benefits
+- **Faster interaction**: No need to gather all info upfront
+- **Progressive refinement**: Build payloads iteratively
+- **Clear tracking**: `_placeholders` field shows what's missing
+- **Validation**: Basic validation on update (dates, IDs)
+
+#### Testing
+Run placeholder tests: `python test_placeholders.py`
 
 ### State Management
 

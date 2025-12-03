@@ -7,7 +7,12 @@ import uuid
 from .models import ProductSpec, ZuoraApiType
 from .zuora_client import get_zuora_client
 from .observability import trace_function
-from .validation_schemas import validate_payload, format_validation_questions
+from .validation_schemas import (
+    validate_payload,
+    format_validation_questions,
+    generate_placeholder_payload,
+    format_placeholder_warning,
+)
 from .validation_utils import (
     validate_date_format,
     validate_date_range,
@@ -44,7 +49,22 @@ def get_payloads(tool_context: ToolContext, api_type: Optional[str] = None) -> s
     if not payloads:
         return f"No payloads found" + (f" for type '{api_type}'" if api_type else "")
 
-    return json.dumps(payloads, indent=2)
+    # Check if any payloads have placeholders
+    payloads_with_placeholders = [p for p in payloads if p.get("_placeholders")]
+
+    output = json.dumps(payloads, indent=2)
+
+    if payloads_with_placeholders:
+        output += "\n\n⚠️ **Warning:** "
+        output += f"{len(payloads_with_placeholders)} payload(s) contain <<PLACEHOLDER>> values.\n"
+        output += "Use `update_payload()` to replace them before API execution.\n"
+        output += "Placeholder fields:\n"
+        for p in payloads_with_placeholders:
+            payload_id = p.get("payload_id", "unknown")
+            placeholders = p.get("_placeholders", [])
+            output += f"  - Payload {payload_id}: {', '.join(placeholders)}\n"
+
+    return output
 
 
 @tool(context=True)
@@ -55,7 +75,7 @@ def update_payload(
     new_value: Any,
     payload_index: int = 0,
 ) -> str:
-    """Update field in payload using dot notation (e.g., 'ratePlans.0.charges.0.price')."""
+    """Update field in payload using dot notation (e.g., 'ratePlans.0.charges.0.price'). Auto-removes placeholders."""
     payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
 
     # Find matching payloads
@@ -72,7 +92,8 @@ def update_payload(
         return f"Error: payload_index {payload_index} is out of range. Found {len(matching_indices)} payloads of type '{api_type}'"
 
     target_idx = matching_indices[payload_index]
-    payload = payloads[target_idx]["payload"]
+    payload_entry = payloads[target_idx]
+    payload = payload_entry["payload"]
 
     # Navigate to the field using dot notation
     parts = field_path.split(".")
@@ -85,27 +106,79 @@ def update_payload(
                 current[part] = {}
             current = current[part]
 
-    # Set the value
+    # Perform basic validation on the new value
     final_key = parts[-1]
+
+    # Date validation
+    if "date" in final_key.lower() and isinstance(new_value, str):
+        if not validate_date_format(new_value):
+            return format_error_message(
+                "Invalid date format",
+                f"'{final_key}' must be in YYYY-MM-DD format, got: {new_value}",
+            )
+
+    # ID validation
+    if "id" in final_key.lower() and isinstance(new_value, str) and len(new_value) > 5:
+        if not validate_zuora_id(new_value):
+            return format_error_message(
+                "Invalid ID format",
+                f"'{final_key}' appears to be an invalid Zuora ID: {new_value}",
+            )
+
+    # Set the value
     if final_key.isdigit():
         current[int(final_key)] = new_value
     else:
         current[final_key] = new_value
 
+    # Remove from placeholder list if this field was a placeholder
+    if "_placeholders" in payload_entry:
+        # Try to match field path (case-insensitive, flexible matching)
+        placeholders = payload_entry["_placeholders"]
+        # Try exact match first
+        if field_path in placeholders:
+            placeholders.remove(field_path)
+        else:
+            # Try case-insensitive match
+            for ph in list(placeholders):
+                if ph.lower() == field_path.lower() or ph.lower() == final_key.lower():
+                    placeholders.remove(ph)
+                    break
+
+        # Remove the _placeholders key if empty
+        if not placeholders:
+            del payload_entry["_placeholders"]
+
     # Update state
     tool_context.agent.state.set(PAYLOADS_STATE_KEY, payloads)
 
-    return f"Successfully updated '{field_path}' to '{new_value}' in {api_type} payload.\n\nUpdated payload:\n{json.dumps(payloads[target_idx], indent=2)}"
+    response = f"✅ Successfully updated '{field_path}' to '{new_value}' in {api_type} payload.\n\n"
+
+    # Show remaining placeholders if any
+    if payload_entry.get("_placeholders"):
+        response += (
+            f"⚠️ Remaining placeholders: {', '.join(payload_entry['_placeholders'])}\n\n"
+        )
+    else:
+        response += "✅ All placeholders resolved! Payload is ready for execution.\n\n"
+
+    response += f"Updated payload:\n{json.dumps(payloads[target_idx], indent=2)}"
+
+    return response
 
 
 @tool(context=True)
 def create_payload(
     tool_context: ToolContext, api_type: str, payload_data: Dict[str, Any]
 ) -> str:
-    """Create new Zuora payload with validation."""
+    """Create new Zuora payload with validation. Generates placeholders for missing required fields."""
     from .html_formatter import (
         generate_reference_documentation,
         format_payload_with_references,
+    )
+    from .validation_schemas import (
+        generate_placeholder_payload,
+        format_placeholder_warning,
     )
 
     # Validate api_type
@@ -113,43 +186,60 @@ def create_payload(
     if api_type.lower() not in valid_types:
         return f"<p>Error: Invalid api_type '{api_type}'. Valid types are: {', '.join(valid_types)}</p>"
 
-    # Validate required fields before creating payload
+    # Validate required fields
     is_valid, missing_fields = validate_payload(api_type, payload_data)
 
+    # Prepare the payload (with or without placeholders)
     if not is_valid:
-        # Return clarifying questions for missing fields
-        return format_validation_questions(api_type, missing_fields)
+        # Generate payload WITH placeholders for missing fields
+        complete_payload, placeholder_list = generate_placeholder_payload(
+            api_type, payload_data, missing_fields
+        )
+    else:
+        # All required fields present
+        complete_payload = payload_data
+        placeholder_list = []
 
-    # Validation passed - create the payload
+    # Create the payload entry
     payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
 
     new_payload = {
-        "payload": payload_data,
+        "payload": complete_payload,
         "zuora_api_type": api_type.lower(),
         "payload_id": str(uuid.uuid4())[:8],
     }
 
+    # Add placeholder tracking if present
+    if placeholder_list:
+        new_payload["_placeholders"] = placeholder_list
+
     payloads.append(new_payload)
     tool_context.agent.state.set(PAYLOADS_STATE_KEY, payloads)
 
-    # Generate output with reference documentation for nested objects
-    output = f"<h4>Created {api_type} Payload</h4>\n"
-    output += f"<p><strong>Payload ID:</strong> <code>{new_payload['payload_id']}</code></p>\n"
+    # Generate output
+    if placeholder_list:
+        # Return warning about placeholders
+        return format_placeholder_warning(api_type, placeholder_list, new_payload)
+    else:
+        # Generate normal success output with reference documentation for nested objects
+        output = f"<h4>✅ Created {api_type} Payload</h4>\n"
+        output += f"<p><strong>Payload ID:</strong> <code>{new_payload['payload_id']}</code></p>\n"
 
-    # Check if this is a nested payload with objects array
-    if "objects" in payload_data:
-        ref_doc = format_payload_with_references(payload_data["objects"])
-        output += ref_doc
-    # Check for nested rate plans in product payloads
-    elif api_type.lower() == "product" and (
-        "productRatePlans" in payload_data or "ProductRatePlans" in payload_data
-    ):
-        ref_doc = generate_reference_documentation(payload_data)
-        output += ref_doc
+        # Check if this is a nested payload with objects array
+        if "objects" in complete_payload:
+            ref_doc = format_payload_with_references(complete_payload["objects"])
+            output += ref_doc
+        # Check for nested rate plans in product payloads
+        elif api_type.lower() == "product" and (
+            "productRatePlans" in complete_payload
+            or "ProductRatePlans" in complete_payload
+        ):
+            ref_doc = generate_reference_documentation(complete_payload)
+            output += ref_doc
 
-    output += f"\n<pre><code>{json.dumps(new_payload, indent=2)}</code></pre>"
+        output += f"\n<pre><code>{json.dumps(new_payload, indent=2)}</code></pre>"
 
-    return output
+        return output
 
 
 @tool(context=True)
@@ -470,167 +560,123 @@ This payload has been added to the response. Execute it via the Zuora API to app
 def create_product(
     tool_context: ToolContext,
     name: str,
-    sku: str,
-    effective_start_date: str,
+    sku: Optional[str] = None,
+    effective_start_date: Optional[str] = None,
     description: Optional[str] = None,
     effective_end_date: Optional[str] = None,
 ) -> str:
-    """Generate payload to create new product with validation."""
-    import re
+    """Generate payload to create new product. Missing fields will use placeholders."""
     from datetime import datetime
 
-    # Validate date format
-    date_pattern = r"^\d{4}-\d{2}-\d{2}$"
-    if not re.match(date_pattern, effective_start_date):
-        return f"❌ Invalid date format for effective_start_date. Use YYYY-MM-DD format (e.g., 2024-01-01)"
+    # Build product payload with provided values
+    payload_data = {"name": name}
 
-    if effective_end_date and not re.match(date_pattern, effective_end_date):
-        return f"❌ Invalid date format for effective_end_date. Use YYYY-MM-DD format (e.g., 2024-12-31)"
+    # Apply smart defaults for common fields
+    if not effective_start_date:
+        # Default to today if not provided
+        effective_start_date = datetime.now().strftime("%Y-%m-%d")
 
-    # Validate end date is after start date
+    # Validate date format if provided
+    if effective_start_date:
+        if not validate_date_format(effective_start_date):
+            return format_error_message(
+                "Invalid date format",
+                f"effective_start_date must be YYYY-MM-DD format (e.g., 2024-01-01), got: {effective_start_date}",
+            )
+        payload_data["effectiveStartDate"] = effective_start_date
+
     if effective_end_date:
-        try:
-            start = datetime.strptime(effective_start_date, "%Y-%m-%d")
-            end = datetime.strptime(effective_end_date, "%Y-%m-%d")
-            if end <= start:
-                return f"❌ effective_end_date must be after effective_start_date"
-        except ValueError as e:
-            return f"❌ Invalid date: {str(e)}"
+        if not validate_date_format(effective_end_date):
+            return format_error_message(
+                "Invalid date format",
+                f"effective_end_date must be YYYY-MM-DD format (e.g., 2024-12-31), got: {effective_end_date}",
+            )
+        # Validate end date is after start date
+        if not validate_date_range(effective_start_date, effective_end_date):
+            return format_error_message(
+                "Invalid date range",
+                "effective_end_date must be after effective_start_date",
+            )
+        payload_data["effectiveEndDate"] = effective_end_date
 
-    # Validate SKU format (alphanumeric, hyphens, underscores)
-    if not re.match(r"^[a-zA-Z0-9_-]+$", sku):
-        return f"❌ Invalid SKU format. Use only alphanumeric characters, hyphens, and underscores"
-
-    payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
-
-    # Build product payload
-    payload_data = {
-        "name": name,
-        "sku": sku,
-        "effectiveStartDate": effective_start_date,
-    }
+    if sku:
+        if not validate_sku_format(sku):
+            return format_error_message(
+                "Invalid SKU format",
+                "Use only alphanumeric characters, hyphens, and underscores",
+            )
+        payload_data["sku"] = sku
 
     if description:
         payload_data["description"] = description
-    if effective_end_date:
-        payload_data["effectiveEndDate"] = effective_end_date
 
-    product_payload = {
-        "payload": payload_data,
-        "zuora_api_type": "product_create",
-        "payload_id": str(uuid.uuid4())[:8],
-        "_endpoint": "POST /v1/catalog/products",
-        "_method": "POST",
-    }
-
-    payloads.append(product_payload)
-    tool_context.agent.state.set(PAYLOADS_STATE_KEY, payloads)
-
-    return f"""<h3>Generated Product Creation Payload</h3>
-
-<p><strong>Product:</strong> {name}</p>
-<p><strong>SKU:</strong> {sku}</p>
-<p><strong>Endpoint:</strong> <code>POST /v1/catalog/products</code></p>
-
-<h4>Payload</h4>
-<pre><code>{json.dumps(payload_data, indent=2)}</code></pre>
-
-<h4>Next Steps</h4>
-<ol>
-  <li>Review the payload above</li>
-  <li>Execute: <code>POST /v1/catalog/products</code> with the payload body</li>
-  <li><strong>Save the returned product ID</strong> - you'll need it to create rate plans</li>
-</ol>
-
-<p><strong>Payload ID:</strong> <code>{product_payload["payload_id"]}</code></p>
-<p><em>Note: This payload has been added to zuora_api_payloads in the response.</em></p>"""
+    # Delegate to create_payload which handles placeholders and validation
+    return create_payload(tool_context, "product_create", payload_data)
 
 
 @tool(context=True)
 def create_rate_plan(
     tool_context: ToolContext,
-    product_id: str,
-    name: str,
+    product_id: Optional[str] = None,
+    name: Optional[str] = None,
     description: Optional[str] = None,
     effective_start_date: Optional[str] = None,
     effective_end_date: Optional[str] = None,
 ) -> str:
-    """Generate payload to create rate plan for a product."""
-    import re
-    from datetime import datetime
+    """Generate payload to create rate plan for a product. Missing fields will use placeholders."""
+    # Build rate plan payload with provided values
+    payload_data = {}
 
-    # Validate product_id format (Zuora IDs typically start with alphanumeric)
-    if not product_id or len(product_id) < 10:
-        return f"❌ Invalid product_id. Provide the product ID from Zuora (e.g., '8a1234567890abcd')"
+    if product_id:
+        # Basic validation if provided
+        if not validate_zuora_id(product_id):
+            return format_error_message(
+                "Invalid product_id",
+                "Provide a valid Zuora product ID (e.g., '8a1234567890abcd')",
+            )
+        payload_data["productId"] = product_id
 
-    # Validate date formats if provided
-    date_pattern = r"^\d{4}-\d{2}-\d{2}$"
-    if effective_start_date and not re.match(date_pattern, effective_start_date):
-        return f"❌ Invalid date format for effective_start_date. Use YYYY-MM-DD format"
-
-    if effective_end_date and not re.match(date_pattern, effective_end_date):
-        return f"❌ Invalid date format for effective_end_date. Use YYYY-MM-DD format"
-
-    # Validate end date is after start date
-    if effective_start_date and effective_end_date:
-        try:
-            start = datetime.strptime(effective_start_date, "%Y-%m-%d")
-            end = datetime.strptime(effective_end_date, "%Y-%m-%d")
-            if end <= start:
-                return f"❌ effective_end_date must be after effective_start_date"
-        except ValueError as e:
-            return f"❌ Invalid date: {str(e)}"
-
-    payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
-
-    # Build rate plan payload
-    payload_data = {"productId": product_id, "name": name}
+    if name:
+        payload_data["name"] = name
 
     if description:
         payload_data["description"] = description
+
     if effective_start_date:
+        if not validate_date_format(effective_start_date):
+            return format_error_message(
+                "Invalid date format",
+                f"effective_start_date must be YYYY-MM-DD format, got: {effective_start_date}",
+            )
         payload_data["effectiveStartDate"] = effective_start_date
+
     if effective_end_date:
+        if not validate_date_format(effective_end_date):
+            return format_error_message(
+                "Invalid date format",
+                f"effective_end_date must be YYYY-MM-DD format, got: {effective_end_date}",
+            )
+        # Validate end date is after start date if both provided
+        if effective_start_date and not validate_date_range(
+            effective_start_date, effective_end_date
+        ):
+            return format_error_message(
+                "Invalid date range",
+                "effective_end_date must be after effective_start_date",
+            )
         payload_data["effectiveEndDate"] = effective_end_date
 
-    rate_plan_payload = {
-        "payload": payload_data,
-        "zuora_api_type": "rate_plan_create",
-        "payload_id": str(uuid.uuid4())[:8],
-        "_endpoint": "POST /v1/catalog/product-rate-plans",
-        "_method": "POST",
-    }
-
-    payloads.append(rate_plan_payload)
-    tool_context.agent.state.set(PAYLOADS_STATE_KEY, payloads)
-
-    return f"""<h3>Generated Rate Plan Creation Payload</h3>
-
-<p><strong>Rate Plan:</strong> {name}</p>
-<p><strong>Product ID:</strong> <code>{product_id}</code></p>
-<p><strong>Endpoint:</strong> <code>POST /v1/catalog/product-rate-plans</code></p>
-
-<h4>Payload</h4>
-<pre><code>{json.dumps(payload_data, indent=2)}</code></pre>
-
-<h4>Next Steps</h4>
-<ol>
-  <li>Review the payload above</li>
-  <li>Execute: <code>POST /v1/catalog/product-rate-plans</code> with the payload body</li>
-  <li><strong>Save the returned rate plan ID</strong> - you'll need it to create charges</li>
-</ol>
-
-<p><strong>Payload ID:</strong> <code>{rate_plan_payload["payload_id"]}</code></p>
-<p><em>Note: This payload has been added to zuora_api_payloads in the response.</em></p>"""
+    # Delegate to create_payload which handles placeholders and validation
+    return create_payload(tool_context, "rate_plan_create", payload_data)
 
 
 @tool(context=True)
 def create_charge(
     tool_context: ToolContext,
-    rate_plan_id: str,
-    name: str,
-    charge_type: Literal["Recurring", "OneTime", "Usage"],
-    charge_model: Literal["FlatFee", "PerUnit", "Tiered", "Volume"],
+    rate_plan_id: Optional[str] = None,
+    name: Optional[str] = None,
+    charge_type: Optional[Literal["Recurring", "OneTime", "Usage"]] = None,
+    charge_model: Optional[Literal["FlatFee", "PerUnit", "Tiered", "Volume"]] = None,
     price: Optional[float] = None,
     billing_period: Optional[
         Literal["Month", "Quarter", "Annual", "Week", "Day"]
@@ -639,100 +685,44 @@ def create_charge(
     uom: Optional[str] = None,
     description: Optional[str] = None,
 ) -> str:
-    """Generate charge creation payload with validation."""
-    # Validate rate_plan_id
-    if not rate_plan_id or len(rate_plan_id) < 10:
-        return f"❌ Invalid rate_plan_id. Provide the rate plan ID from Zuora"
+    """Generate charge creation payload. Missing required fields will use placeholders."""
+    # Build charge payload with provided values
+    payload_data = {}
 
-    # Validate charge configuration
-    validation_errors = []
+    if rate_plan_id:
+        if not validate_zuora_id(rate_plan_id):
+            return format_error_message(
+                "Invalid rate_plan_id", "Provide a valid Zuora rate plan ID"
+            )
+        payload_data["productRatePlanId"] = rate_plan_id
 
-    # Recurring charges require billing_period
-    if charge_type == "Recurring" and not billing_period:
-        validation_errors.append(
-            "Recurring charges require billing_period (Month, Quarter, Annual, Week, or Day)"
-        )
+    if name:
+        payload_data["name"] = name
 
-    # Usage charges require uom
-    if charge_type == "Usage" and not uom:
-        validation_errors.append(
-            "Usage charges require uom (unit of measure, e.g., 'API_CALL', 'GB', 'TRANSACTION')"
-        )
+    if charge_type:
+        payload_data["chargeType"] = charge_type
 
-    # FlatFee and PerUnit charges require price
-    if charge_model in ["FlatFee", "PerUnit"] and price is None:
-        validation_errors.append(f"{charge_model} charges require a price amount")
+    if charge_model:
+        payload_data["chargeModel"] = charge_model
 
-    # Tiered and Volume charges should not have a simple price (they use tier data)
-    if charge_model in ["Tiered", "Volume"] and price is not None:
-        validation_errors.append(
-            f"{charge_model} charges use tier pricing. Do not specify a simple price. Use the generic create_payload tool for tiered pricing."
-        )
-
-    if validation_errors:
-        error_msg = "<br>".join(f"• {err}" for err in validation_errors)
-        return f"""<h3>❌ Validation Error</h3>
-
-<p><strong>Invalid charge configuration:</strong></p>
-{error_msg}
-
-<p><strong>Examples:</strong></p>
-<ul>
-  <li><strong>Recurring FlatFee:</strong> charge_type="Recurring", charge_model="FlatFee", price=99.99, billing_period="Month"</li>
-  <li><strong>Usage PerUnit:</strong> charge_type="Usage", charge_model="PerUnit", price=0.01, uom="API_CALL"</li>
-  <li><strong>OneTime FlatFee:</strong> charge_type="OneTime", charge_model="FlatFee", price=199.99</li>
-</ul>"""
-
-    payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
-
-    # Build charge payload
-    payload_data = {
-        "productRatePlanId": rate_plan_id,
-        "name": name,
-        "chargeType": charge_type,
-        "chargeModel": charge_model,
-        "billingTiming": billing_timing,
-    }
+    # Always include billing timing (has default)
+    payload_data["billingTiming"] = billing_timing
 
     if description:
         payload_data["description"] = description
+
     if price is not None:
         payload_data["price"] = price
+
     if billing_period:
         payload_data["billingPeriod"] = billing_period
+
     if uom:
         payload_data["uom"] = uom
 
-    charge_payload = {
-        "payload": payload_data,
-        "zuora_api_type": "charge_create",
-        "payload_id": str(uuid.uuid4())[:8],
-        "_endpoint": "POST /v1/catalog/product-rate-plan-charges",
-        "_method": "POST",
-    }
-
-    payloads.append(charge_payload)
-    tool_context.agent.state.set(PAYLOADS_STATE_KEY, payloads)
-
-    return f"""<h3>Generated Charge Creation Payload</h3>
-
-<p><strong>Charge:</strong> {name}</p>
-<p><strong>Type:</strong> {charge_type} / {charge_model}</p>
-<p><strong>Rate Plan ID:</strong> <code>{rate_plan_id}</code></p>
-<p><strong>Endpoint:</strong> <code>POST /v1/catalog/product-rate-plan-charges</code></p>
-
-<h4>Payload</h4>
-<pre><code>{json.dumps(payload_data, indent=2)}</code></pre>
-
-<h4>Next Steps</h4>
-<ol>
-  <li>Review the payload above</li>
-  <li>Execute: <code>POST /v1/catalog/product-rate-plan-charges</code> with the payload body</li>
-  <li>The charge will be active on new subscriptions using this rate plan</li>
-</ol>
-
-<p><strong>Payload ID:</strong> <code>{charge_payload["payload_id"]}</code></p>
-<p><em>Note: This payload has been added to zuora_api_payloads in the response.</em></p>"""
+    # Delegate to create_payload which handles placeholders and validation
+    # It will add placeholders for conditionally required fields based on chargeType
+    return create_payload(tool_context, "charge_create", payload_data)
 
 
 # ============ Billing Architect Advisory Tools ============
