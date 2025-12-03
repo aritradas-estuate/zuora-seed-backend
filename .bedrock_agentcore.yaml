@@ -30,7 +30,7 @@ agents:
     bedrock_agentcore:
       agent_id: zuora_seed-XdxAtV5qav
       agent_arn: arn:aws:bedrock-agentcore:us-east-2:870678671753:runtime/zuora_seed-XdxAtV5qav
-      agent_session_id: 964c3c4c-e092-4c97-8149-ccd4e88ecb60
+      agent_session_id: null
     codebuild:
       project_name: null
       execution_role: null

@@ -1,11 +1,20 @@
 """
 Zuora API Client with OAuth authentication.
-Handles product catalog queries and updates via Commerce APIs.
+Handles product catalog queries and updates via v1 Catalog API.
 """
 import time
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from typing import Optional, Dict, Any, List
-from .config import ZUORA_CLIENT_ID, ZUORA_CLIENT_SECRET, ZUORA_ENV
+from .config import (
+    ZUORA_CLIENT_ID, ZUORA_CLIENT_SECRET, ZUORA_ENV,
+    ZUORA_API_CACHE_ENABLED, ZUORA_API_RETRY_ATTEMPTS,
+    ZUORA_API_RETRY_BACKOFF_FACTOR, ZUORA_API_CONNECTION_POOL_SIZE,
+    ZUORA_API_REQUEST_TIMEOUT, ZUORA_OAUTH_TIMEOUT
+)
+from .cache import get_cache
+from .observability import get_tracer, get_metrics_collector, trace_function
 
 
 # Base URLs by environment
@@ -39,6 +48,38 @@ class ZuoraClient:
         self._access_token: Optional[str] = None
         self._token_expires_at: float = 0
 
+        # Observability and caching
+        self.cache = get_cache() if ZUORA_API_CACHE_ENABLED else None
+        self.tracer = get_tracer()
+        self.metrics = get_metrics_collector()
+
+        # HTTP session with connection pooling and retry logic
+        self.session = self._create_session()
+
+    def _create_session(self) -> requests.Session:
+        """Create HTTP session with connection pooling and retry logic."""
+        session = requests.Session()
+
+        # Retry strategy: exponential backoff for transient failures
+        retry_strategy = Retry(
+            total=ZUORA_API_RETRY_ATTEMPTS,
+            backoff_factor=ZUORA_API_RETRY_BACKOFF_FACTOR,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET", "POST", "PUT"],
+            raise_on_status=False
+        )
+
+        # Mount adapter with connection pooling
+        adapter = HTTPAdapter(
+            pool_connections=ZUORA_API_CONNECTION_POOL_SIZE,
+            pool_maxsize=ZUORA_API_CONNECTION_POOL_SIZE,
+            max_retries=retry_strategy
+        )
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+
+        return session
+
     @property
     def is_configured(self) -> bool:
         """Check if credentials are configured."""
@@ -49,6 +90,7 @@ class ZuoraClient:
         """Check if we have a valid token."""
         return self._access_token is not None and time.time() < self._token_expires_at
 
+    @trace_function(span_name="zuora.oauth.authenticate", attributes={"component": "oauth"})
     def authenticate(self) -> Dict[str, Any]:
         """
         Authenticate with Zuora OAuth and obtain access token.
@@ -62,8 +104,24 @@ class ZuoraClient:
                 "message": "Zuora credentials not configured. Please set ZUORA_CLIENT_ID and ZUORA_CLIENT_SECRET."
             }
 
+        # Check cache for existing token
+        if self.cache:
+            cached_token_data = self.cache.get("oauth", "/token")
+            if cached_token_data:
+                self._access_token = cached_token_data.get("access_token")
+                self._token_expires_at = cached_token_data.get("expires_at", 0)
+                self.metrics.record_cache_hit("oauth")
+                return {
+                    "success": True,
+                    "message": f"Connected to Zuora {self.env.upper()} environment (cached).",
+                    "environment": self.env,
+                    "base_url": self.base_url
+                }
+            self.metrics.record_cache_miss("oauth")
+
+        start_time = time.time()
         try:
-            response = requests.post(
+            response = self.session.post(
                 f"{self.base_url}/oauth/token",
                 headers={
                     "Content-Type": "application/x-www-form-urlencoded",
@@ -74,8 +132,10 @@ class ZuoraClient:
                     "client_secret": self.client_secret,
                     "grant_type": "client_credentials"
                 },
-                timeout=30
+                timeout=ZUORA_OAUTH_TIMEOUT
             )
+
+            duration_ms = (time.time() - start_time) * 1000
 
             if response.status_code == 200:
                 data = response.json()
@@ -84,6 +144,17 @@ class ZuoraClient:
                 expires_in = data.get("expires_in", 3600)
                 self._token_expires_at = time.time() + expires_in - 300
 
+                # Cache the token
+                if self.cache:
+                    token_data = {
+                        "access_token": self._access_token,
+                        "expires_at": self._token_expires_at
+                    }
+                    # Cache with TTL matching token expiry
+                    self.cache.set("oauth", "/token", token_data, ttl=expires_in - 300)
+
+                self.metrics.record_api_call("POST", "/oauth/token", duration_ms, True)
+
                 return {
                     "success": True,
                     "message": f"Connected to Zuora {self.env.upper()} environment.",
@@ -91,13 +162,18 @@ class ZuoraClient:
                     "base_url": self.base_url
                 }
             else:
-                error_msg = response.json().get("message", response.text)
+                error_msg = response.json().get("message", response.text) if response.text else f"HTTP {response.status_code}"
+                self.metrics.record_api_call("POST", "/oauth/token", duration_ms, False)
+                self.metrics.record_api_error("POST", "/oauth/token", f"http_{response.status_code}")
                 return {
                     "success": False,
                     "message": f"Authentication failed: {error_msg}"
                 }
 
         except requests.RequestException as e:
+            duration_ms = (time.time() - start_time) * 1000
+            self.metrics.record_api_call("POST", "/oauth/token", duration_ms, False)
+            self.metrics.record_api_error("POST", "/oauth/token", type(e).__name__)
             return {
                 "success": False,
                 "message": f"Connection error: {str(e)}"
@@ -115,7 +191,8 @@ class ZuoraClient:
         method: str,
         endpoint: str,
         data: Optional[Dict] = None,
-        params: Optional[Dict] = None
+        params: Optional[Dict] = None,
+        use_cache: bool = True
     ) -> Dict[str, Any]:
         """
         Make an authenticated request to Zuora API.
@@ -125,47 +202,91 @@ class ZuoraClient:
             endpoint: API endpoint (e.g., "/v1/catalog/products")
             data: Request body for POST/PUT
             params: Query parameters
+            use_cache: Whether to use caching for this request (default: True)
 
         Returns:
             API response as dict, or error dict
         """
-        if not self._ensure_authenticated():
-            return {"success": False, "error": "Not authenticated"}
+        with self.tracer.start_as_current_span("zuora.api.request") as span:
+            span.set_attribute("http.method", method)
+            span.set_attribute("http.url", endpoint)
+            span.set_attribute("zuora.env", self.env)
 
-        url = f"{self.base_url}{endpoint}"
-        headers = {
-            "Authorization": f"Bearer {self._access_token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json"
-        }
+            # Try cache for GET requests
+            if use_cache and self.cache and method == "GET":
+                cached_response = self.cache.get(method, endpoint, params, data)
+                if cached_response:
+                    span.set_attribute("cache.hit", True)
+                    self.metrics.record_cache_hit(f"api:{method}")
+                    return cached_response
+                span.set_attribute("cache.hit", False)
+                self.metrics.record_cache_miss(f"api:{method}")
 
-        try:
-            response = requests.request(
-                method=method,
-                url=url,
-                headers=headers,
-                json=data,
-                params=params,
-                timeout=60
-            )
+            if not self._ensure_authenticated():
+                span.set_attribute("error", True)
+                return {"success": False, "error": "Not authenticated"}
 
-            if response.status_code in (200, 201):
-                return {"success": True, "data": response.json()}
-            else:
-                error_data = response.json() if response.text else {}
-                return {
-                    "success": False,
-                    "error": error_data.get("message", f"HTTP {response.status_code}"),
-                    "details": error_data
-                }
+            url = f"{self.base_url}{endpoint}"
+            headers = {
+                "Authorization": f"Bearer {self._access_token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
 
-        except requests.RequestException as e:
-            return {"success": False, "error": str(e)}
+            start_time = time.time()
+            try:
+                response = self.session.request(
+                    method=method,
+                    url=url,
+                    headers=headers,
+                    json=data,
+                    params=params,
+                    timeout=ZUORA_API_REQUEST_TIMEOUT
+                )
+
+                duration_ms = (time.time() - start_time) * 1000
+                span.set_attribute("http.status_code", response.status_code)
+                span.set_attribute("duration_ms", duration_ms)
+
+                if response.status_code in (200, 201):
+                    result = {"success": True, "data": response.json()}
+
+                    # Cache successful GET responses
+                    if use_cache and self.cache and method == "GET":
+                        self.cache.set(method, endpoint, result, params, data)
+
+                    self.metrics.record_api_call(method, endpoint, duration_ms, True)
+                    return result
+                else:
+                    error_data = response.json() if response.text else {}
+                    result = {
+                        "success": False,
+                        "error": error_data.get("message", f"HTTP {response.status_code}"),
+                        "details": error_data
+                    }
+
+                    span.set_attribute("error", True)
+                    self.metrics.record_api_call(method, endpoint, duration_ms, False)
+                    self.metrics.record_api_error(method, endpoint, f"http_{response.status_code}")
+
+                    return result
+
+            except requests.RequestException as e:
+                duration_ms = (time.time() - start_time) * 1000
+                span.set_attribute("error", True)
+                span.set_attribute("error.type", type(e).__name__)
+                span.record_exception(e)
+
+                self.metrics.record_api_call(method, endpoint, duration_ms, False)
+                self.metrics.record_api_error(method, endpoint, type(e).__name__)
+
+                return {"success": False, "error": str(e)}
 
     # =========================================================================
     # Product Operations
     # =========================================================================
 
+    @trace_function(span_name="zuora.products.query", attributes={"operation": "query"})
     def query_products(self, filters: Optional[Dict] = None) -> Dict[str, Any]:
         """
         Query products from the product catalog.
@@ -179,6 +300,7 @@ class ZuoraClient:
         query_data = filters or {}
         return self._request("POST", "/v1/catalog/query/products", data=query_data)
 
+    @trace_function(span_name="zuora.products.list", attributes={"operation": "list"})
     def list_all_products(self, page_size: int = 50) -> Dict[str, Any]:
         """
         List all products in the catalog.
@@ -191,6 +313,7 @@ class ZuoraClient:
         """
         return self._request("GET", "/v1/catalog/products", params={"pageSize": page_size})
 
+    @trace_function(span_name="zuora.products.get", attributes={"operation": "get"})
     def get_product(self, product_key: str) -> Dict[str, Any]:
         """
         Get a product by ID or key.
@@ -203,6 +326,7 @@ class ZuoraClient:
         """
         return self._request("GET", f"/v1/catalog/products/{product_key}")
 
+    @trace_function(span_name="zuora.products.get_by_name", attributes={"operation": "search"})
     def get_product_by_name(self, name: str) -> Dict[str, Any]:
         """
         Search for a product by name.
@@ -221,6 +345,7 @@ class ZuoraClient:
         )
         return result
 
+    @trace_function(span_name="zuora.products.update", attributes={"operation": "update"})
     def update_product(self, product_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
         """
         Update a product's attributes.
@@ -232,12 +357,20 @@ class ZuoraClient:
         Returns:
             Updated product or error
         """
-        return self._request("PUT", f"/v1/catalog/products/{product_id}", data=updates)
+        result = self._request("PUT", f"/v1/catalog/products/{product_id}", data=updates, use_cache=False)
+
+        # Invalidate cache for this product and list
+        if result.get("success") and self.cache:
+            self.cache.invalidate("GET", f"/v1/catalog/products/{product_id}")
+            self.cache.invalidate("GET", "/v1/catalog/products")
+
+        return result
 
     # =========================================================================
     # Rate Plan Operations
     # =========================================================================
 
+    @trace_function(span_name="zuora.rate_plans.list", attributes={"operation": "list"})
     def get_rate_plans(self, product_id: str) -> Dict[str, Any]:
         """
         Get rate plans for a product.
@@ -258,6 +391,7 @@ class ZuoraClient:
             }
         return product_result
 
+    @trace_function(span_name="zuora.rate_plans.get", attributes={"operation": "get"})
     def get_rate_plan(self, rate_plan_id: str) -> Dict[str, Any]:
         """
         Get a specific rate plan by ID.
@@ -270,6 +404,7 @@ class ZuoraClient:
         """
         return self._request("GET", f"/v1/catalog/product-rate-plans/{rate_plan_id}")
 
+    @trace_function(span_name="zuora.rate_plans.update", attributes={"operation": "update"})
     def update_rate_plan(self, rate_plan_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
         """
         Update a rate plan's attributes.
@@ -281,12 +416,19 @@ class ZuoraClient:
         Returns:
             Updated rate plan or error
         """
-        return self._request("PUT", f"/v1/catalog/product-rate-plans/{rate_plan_id}", data=updates)
+        result = self._request("PUT", f"/v1/catalog/product-rate-plans/{rate_plan_id}", data=updates, use_cache=False)
+
+        # Invalidate cache for this rate plan
+        if result.get("success") and self.cache:
+            self.cache.invalidate("GET", f"/v1/catalog/product-rate-plans/{rate_plan_id}")
+
+        return result
 
     # =========================================================================
     # Charge Operations
     # =========================================================================
 
+    @trace_function(span_name="zuora.charges.list", attributes={"operation": "list"})
     def get_charges(self, rate_plan_id: str) -> Dict[str, Any]:
         """
         Get charges for a rate plan.
@@ -306,6 +448,7 @@ class ZuoraClient:
             }
         return rate_plan_result
 
+    @trace_function(span_name="zuora.charges.get", attributes={"operation": "get"})
     def get_charge(self, charge_id: str) -> Dict[str, Any]:
         """
         Get a specific charge by ID.
@@ -318,6 +461,7 @@ class ZuoraClient:
         """
         return self._request("GET", f"/v1/catalog/product-rate-plan-charges/{charge_id}")
 
+    @trace_function(span_name="zuora.charges.update", attributes={"operation": "update"})
     def update_charge(self, charge_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
         """
         Update a charge's attributes.
@@ -331,218 +475,19 @@ class ZuoraClient:
         Returns:
             Updated charge or error
         """
-        return self._request("PUT", f"/v1/catalog/product-rate-plan-charges/{charge_id}", data=updates)
+        result = self._request("PUT", f"/v1/catalog/product-rate-plan-charges/{charge_id}", data=updates, use_cache=False)
 
-    # =========================================================================
-    # Commerce API - Product Operations (Nested Creation Support)
-    # =========================================================================
+        # Invalidate cache for this charge
+        if result.get("success") and self.cache:
+            self.cache.invalidate("GET", f"/v1/catalog/product-rate-plan-charges/{charge_id}")
 
-    def commerce_create_product(self, product_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Create product with nested rate plans and charges via Commerce API.
-
-        POST /commerce/products
-
-        Supports nested structure with @{Reference.Id} placeholders:
-        {
-            "name": "Product Name",
-            "sku": "SKU-001",
-            "productRatePlans": [
-                {
-                    "name": "Plan 1",
-                    "productRatePlanCharges": [
-                        {"name": "Charge 1", "type": "Recurring", ...}
-                    ]
-                }
-            ]
-        }
-
-        Args:
-            product_data: Complete product structure with nested rate plans and charges
-
-        Returns:
-            Created product with IDs for all nested objects or error
-        """
-        return self._request("POST", "/commerce/products", data=product_data)
-
-    def commerce_update_product(self, product_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Update product via Commerce API.
-
-        Args:
-            product_id: Product ID
-            updates: Fields to update
-
-        Returns:
-            Updated product or error
-        """
-        return self._request("PUT", f"/commerce/products/{product_id}", data=updates)
-
-    def commerce_query_products(self, filters: Optional[Dict] = None) -> Dict[str, Any]:
-        """
-        Query products via Commerce API.
-
-        Args:
-            filters: Optional filter criteria
-
-        Returns:
-            List of products or error
-        """
-        return self._request("POST", "/commerce/products/query", data=filters or {})
-
-    # =========================================================================
-    # Commerce API - Rate Plan Operations
-    # =========================================================================
-
-    def commerce_create_rate_plan(
-        self,
-        product_id: str,
-        rate_plan_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Create rate plan via Commerce API.
-
-        Args:
-            product_id: Parent product ID
-            rate_plan_data: Rate plan configuration
-
-        Returns:
-            Created rate plan or error
-        """
-        rate_plan_data["productId"] = product_id
-        return self._request("POST", "/commerce/product-rate-plans", data=rate_plan_data)
-
-    def commerce_update_rate_plan(
-        self,
-        rate_plan_id: str,
-        updates: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Update rate plan via Commerce API.
-
-        Args:
-            rate_plan_id: Rate plan ID
-            updates: Fields to update
-
-        Returns:
-            Updated rate plan or error
-        """
-        return self._request("PUT", f"/commerce/product-rate-plans/{rate_plan_id}", data=updates)
-
-    def commerce_query_rate_plans(
-        self,
-        product_id: Optional[str] = None,
-        filters: Optional[Dict] = None
-    ) -> Dict[str, Any]:
-        """
-        Query rate plans via Commerce API.
-
-        Args:
-            product_id: Optional product ID to filter by
-            filters: Optional additional filter criteria
-
-        Returns:
-            List of rate plans or error
-        """
-        query_data = filters or {}
-        if product_id:
-            query_data["productId"] = product_id
-        return self._request("POST", "/commerce/product-rate-plans/query", data=query_data)
-
-    # =========================================================================
-    # Commerce API - Charge Operations with Dynamic Pricing
-    # =========================================================================
-
-    def commerce_create_charge(
-        self,
-        rate_plan_id: str,
-        charge_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Create charge via Commerce API.
-
-        Args:
-            rate_plan_id: Parent rate plan ID
-            charge_data: Charge configuration
-
-        Returns:
-            Created charge or error
-        """
-        charge_data["productRatePlanId"] = rate_plan_id
-        return self._request("POST", "/commerce/product-rate-plan-charges", data=charge_data)
-
-    def commerce_create_charge_with_dynamic_pricing(
-        self,
-        rate_plan_id: str,
-        charge_data: Dict[str, Any],
-        dynamic_pricing_config: Optional[Dict] = None
-    ) -> Dict[str, Any]:
-        """
-        Create charge with Dynamic Pricing via Commerce API.
-
-        Dynamic Pricing supports:
-        - fieldLookup() expressions for customer-specific pricing
-        - Attribute-based pricing matrices
-        - Formula-based pricing
-
-        Args:
-            rate_plan_id: Parent rate plan ID
-            charge_data: Base charge configuration
-            dynamic_pricing_config: Dynamic pricing configuration with:
-                - pricingType: "Static", "Dynamic", or "Formula"
-                - formula: fieldLookup expression, e.g., "fieldLookup('Account.Price__c')"
-                - defaultPrice: Fallback price when dynamic lookup fails
-                - attributes: Attribute-based pricing matrix
-
-        Returns:
-            Created charge with dynamic pricing or error
-        """
-        charge_data["productRatePlanId"] = rate_plan_id
-        if dynamic_pricing_config:
-            charge_data["dynamicPricing"] = dynamic_pricing_config
-        return self._request("POST", "/commerce/product-rate-plan-charges", data=charge_data)
-
-    def commerce_update_charge(
-        self,
-        charge_id: str,
-        updates: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Update charge via Commerce API.
-
-        Args:
-            charge_id: Charge ID
-            updates: Fields to update
-
-        Returns:
-            Updated charge or error
-        """
-        return self._request("PUT", f"/commerce/product-rate-plan-charges/{charge_id}", data=updates)
-
-    def commerce_query_charges(
-        self,
-        rate_plan_id: Optional[str] = None,
-        filters: Optional[Dict] = None
-    ) -> Dict[str, Any]:
-        """
-        Query charges via Commerce API.
-
-        Args:
-            rate_plan_id: Optional rate plan ID to filter by
-            filters: Optional additional filter criteria
-
-        Returns:
-            List of charges or error
-        """
-        query_data = filters or {}
-        if rate_plan_id:
-            query_data["productRatePlanId"] = rate_plan_id
-        return self._request("POST", "/commerce/product-rate-plan-charges/query", data=query_data)
+        return result
 
     # =========================================================================
     # Utility Methods
     # =========================================================================
 
+    @trace_function(span_name="zuora.connection.check", attributes={"operation": "check"})
     def check_connection(self) -> Dict[str, Any]:
         """
         Check connection status and authenticate if needed.

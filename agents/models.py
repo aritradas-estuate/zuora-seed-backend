@@ -51,21 +51,18 @@ class ProductSpec(BaseModel):
 # ============ Chat API Models ============
 
 class ZuoraApiType(str, Enum):
-    """Commerce API types for Product Manager persona."""
-    # Legacy Catalog API types (backward compatibility)
+    """Zuora API types for v1 Catalog API."""
+    # v1 Catalog API types
     PRODUCT = "product"
+    PRODUCT_CREATE = "product_create"
     PRODUCT_RATE_PLAN = "product_rate_plan"
+    RATE_PLAN_CREATE = "rate_plan_create"
     PRODUCT_RATE_PLAN_CHARGE = "product_rate_plan_charge"
+    CHARGE_CREATE = "charge_create"
     PRODUCT_RATE_PLAN_CHARGE_TIER = "product_rate_plan_charge_tier"
     PRODUCT_UPDATE = "product_update"
     RATE_PLAN_UPDATE = "rate_plan_update"
     CHARGE_UPDATE = "charge_update"
-    # Commerce API types (new - supports nested creation)
-    COMMERCE_PRODUCT = "commerce_product"
-    COMMERCE_PRODUCT_NESTED = "commerce_product_nested"
-    COMMERCE_RATE_PLAN = "commerce_rate_plan"
-    COMMERCE_CHARGE = "commerce_charge"
-    COMMERCE_CHARGE_DYNAMIC_PRICING = "commerce_charge_dynamic_pricing"
 
 
 class ZuoraApiPayload(BaseModel):
@@ -73,41 +70,6 @@ class ZuoraApiPayload(BaseModel):
     payload: Dict[str, Any] = Field(..., description="The actual payload data")
     zuora_api_type: ZuoraApiType = Field(..., description="Type of Zuora API this payload is for")
     payload_id: Optional[str] = Field(None, description="Optional ID to track this payload across requests")
-
-
-# ============ Commerce API Dynamic Pricing Models ============
-
-class CommerceDynamicPricingConfig(BaseModel):
-    """Dynamic pricing configuration for Commerce API charges."""
-    pricingType: Literal["Static", "Dynamic", "Formula"] = Field(
-        "Static",
-        description="Static: fixed price, Dynamic: fieldLookup, Formula: expression-based"
-    )
-    formula: Optional[str] = Field(
-        None,
-        description="fieldLookup expression, e.g., fieldLookup('Account.Price__c')"
-    )
-    defaultPrice: Optional[float] = Field(
-        None,
-        description="Fallback price when dynamic lookup fails"
-    )
-    attributes: Optional[List[Dict[str, Any]]] = Field(
-        None,
-        description="Attribute-based pricing matrix for multi-attribute pricing"
-    )
-
-
-class CommerceNestedProductPayload(BaseModel):
-    """Commerce API nested product structure with @{Reference.Id} support."""
-    name: str = Field(..., description="Product name")
-    sku: str = Field(..., description="Product SKU")
-    description: Optional[str] = None
-    effectiveStartDate: str = Field(..., description="Effective start date (YYYY-MM-DD)")
-    effectiveEndDate: Optional[str] = Field(None, description="Effective end date (YYYY-MM-DD)")
-    productRatePlans: Optional[List[Dict[str, Any]]] = Field(
-        None,
-        description="Nested rate plans, each can contain productRatePlanCharges"
-    )
 
 
 class Citation(BaseModel):

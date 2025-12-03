@@ -107,7 +107,7 @@ Response (`ChatResponse`):
 
 `ZuoraClient` in `agents/zuora_client.py` handles:
 - OAuth 2.0 token acquisition with automatic refresh
-- Product catalog CRUD operations
+- Product catalog read operations via v1 Catalog API
 - Multi-environment support (sandbox, production, EU regions)
 
 Access via `get_zuora_client()` singleton.

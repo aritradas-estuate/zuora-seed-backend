@@ -6,6 +6,7 @@ import json
 import uuid
 from .models import ProductSpec, ZuoraApiType
 from .zuora_client import get_zuora_client
+from .observability import trace_function
 
 
 # ============ Required Fields Schema for Validation ============
@@ -99,59 +100,6 @@ REQUIRED_FIELDS = {
             "firstName": "Contact first name",
             "lastName": "Contact last name",
             "country": "Country name"
-        }
-    },
-    "commerce_product_nested": {
-        "always": ["objects"],
-        "nested": {},
-        "conditional": {},
-        "descriptions": {
-            "objects": "Array of nested objects (Product, ProductRatePlan, ProductRatePlanCharge)"
-        }
-    },
-    "commerce_product": {
-        "always": ["Name", "EffectiveStartDate"],
-        "nested": {},
-        "conditional": {},
-        "descriptions": {
-            "Name": "Product name",
-            "EffectiveStartDate": "Start date (YYYY-MM-DD)"
-        }
-    },
-    "commerce_rate_plan": {
-        "always": ["Name", "ProductId"],
-        "nested": {},
-        "conditional": {},
-        "descriptions": {
-            "Name": "Rate plan name",
-            "ProductId": "Product ID"
-        }
-    },
-    "commerce_charge": {
-        "always": ["Name", "ProductRatePlanId", "ChargeModel", "ChargeType"],
-        "nested": {},
-        "conditional": {
-            "ChargeType=Recurring": ["BillingPeriod"],
-            "ChargeType=Usage": ["UOM"]
-        },
-        "descriptions": {
-            "Name": "Charge name",
-            "ProductRatePlanId": "Rate plan ID",
-            "ChargeModel": "Pricing model",
-            "ChargeType": "Charge type",
-            "BillingPeriod": "Billing period",
-            "UOM": "Unit of measure"
-        }
-    },
-    "commerce_charge_dynamic_pricing": {
-        "always": ["Name", "ProductRatePlanId", "ChargeModel", "ChargeType"],
-        "nested": {},
-        "conditional": {},
-        "descriptions": {
-            "Name": "Charge name",
-            "ProductRatePlanId": "Rate plan ID",
-            "ChargeModel": "Pricing model",
-            "ChargeType": "Charge type"
         }
     }
 }
@@ -472,7 +420,7 @@ def create_payload(
     output = f"<h4>Created {api_type} Payload</h4>\n"
     output += f"<p><strong>Payload ID:</strong> <code>{new_payload['payload_id']}</code></p>\n"
 
-    # Check if this is a nested Commerce API payload with objects array
+    # Check if this is a nested payload with objects array
     if "objects" in payload_data:
         ref_doc = format_payload_with_references(payload_data["objects"])
         output += ref_doc
@@ -856,243 +804,316 @@ This payload has been added to the response. Execute it via the Zuora API to app
 ⚠️ Note: Charge Model and Charge Type CANNOT be changed if used in existing subscriptions."""
 
 
-# ============ Commerce API Tools (Nested Creation Support) ============
+# ============ Product/Rate Plan/Charge Creation Tools (Payload Generation) ============
 
 @tool(context=True)
-def create_product_with_nested_objects(
+def create_product(
     tool_context: ToolContext,
-    product_name: str,
+    name: str,
     sku: str,
     effective_start_date: str,
-    rate_plans: List[Dict[str, Any]],
     description: Optional[str] = None,
     effective_end_date: Optional[str] = None
 ) -> str:
     """
-    Create a complete product with nested rate plans and charges using Commerce API.
+    Generate a payload to create a new product in Zuora catalog.
 
-    Creates entire hierarchy in a single API call:
-    - Product
-    - ProductRatePlans (nested)
-    - ProductRatePlanCharges (nested within plans)
+    The payload will be added to zuora_api_payloads for manual execution.
 
     Args:
-        product_name: Name of the product
-        sku: Product SKU
+        name: Product name
+        sku: Unique product SKU identifier
         effective_start_date: Start date in YYYY-MM-DD format
-        rate_plans: List of rate plan dictionaries, each can contain nested charges
-                    Example: [{"name": "Basic", "charges": [{"name": "Monthly Fee", "type": "Recurring", "price": 99.99}]}]
         description: Optional product description
         effective_end_date: Optional end date in YYYY-MM-DD format
 
     Returns:
-        HTML-formatted confirmation with object reference guide.
+        Confirmation with payload details for manual execution
     """
-    from .html_formatter import format_payload_with_references
+    import re
+    from datetime import datetime
+
+    # Validate date format
+    date_pattern = r'^\d{4}-\d{2}-\d{2}$'
+    if not re.match(date_pattern, effective_start_date):
+        return f"❌ Invalid date format for effective_start_date. Use YYYY-MM-DD format (e.g., 2024-01-01)"
+
+    if effective_end_date and not re.match(date_pattern, effective_end_date):
+        return f"❌ Invalid date format for effective_end_date. Use YYYY-MM-DD format (e.g., 2024-12-31)"
+
+    # Validate end date is after start date
+    if effective_end_date:
+        try:
+            start = datetime.strptime(effective_start_date, "%Y-%m-%d")
+            end = datetime.strptime(effective_end_date, "%Y-%m-%d")
+            if end <= start:
+                return f"❌ effective_end_date must be after effective_start_date"
+        except ValueError as e:
+            return f"❌ Invalid date: {str(e)}"
+
+    # Validate SKU format (alphanumeric, hyphens, underscores)
+    if not re.match(r'^[a-zA-Z0-9_-]+$', sku):
+        return f"❌ Invalid SKU format. Use only alphanumeric characters, hyphens, and underscores"
 
     payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
 
-    # Build nested product structure
-    product_payload = {
-        "type": "Product",
-        "Name": product_name,
-        "SKU": sku,
-        "EffectiveStartDate": effective_start_date,
+    # Build product payload
+    payload_data = {
+        "name": name,
+        "sku": sku,
+        "effectiveStartDate": effective_start_date
     }
 
     if description:
-        product_payload["Description"] = description
+        payload_data["description"] = description
     if effective_end_date:
-        product_payload["EffectiveEndDate"] = effective_end_date
+        payload_data["effectiveEndDate"] = effective_end_date
 
-    # Build complete objects list for Commerce API
-    objects = [product_payload]
-
-    for rp_idx, rp in enumerate(rate_plans):
-        rate_plan_obj = {
-            "type": "ProductRatePlan",
-            "Name": rp.get("name", f"Rate Plan {rp_idx + 1}"),
-            "ProductId": "@{Product.Id}",
-        }
-        if rp.get("description"):
-            rate_plan_obj["Description"] = rp["description"]
-        if rp.get("effectiveStartDate"):
-            rate_plan_obj["EffectiveStartDate"] = rp["effectiveStartDate"]
-        if rp.get("effectiveEndDate"):
-            rate_plan_obj["EffectiveEndDate"] = rp["effectiveEndDate"]
-
-        objects.append(rate_plan_obj)
-
-        # Add charges for this rate plan
-        charges = rp.get("charges", [])
-        for ch_idx, ch in enumerate(charges):
-            charge_obj = {
-                "type": "ProductRatePlanCharge",
-                "Name": ch.get("name", f"Charge {ch_idx + 1}"),
-                "ProductRatePlanId": f"@{{ProductRatePlan[{rp_idx}].Id}}",
-                "ChargeModel": ch.get("model", ch.get("chargeModel", "FlatFee")),
-                "ChargeType": ch.get("type", ch.get("chargeType", "Recurring")),
-            }
-
-            # Optional charge fields
-            if ch.get("billingPeriod"):
-                charge_obj["BillingPeriod"] = ch["billingPeriod"]
-            if ch.get("billingTiming"):
-                charge_obj["BillingTiming"] = ch["billingTiming"]
-            if ch.get("price") is not None:
-                charge_obj["Price"] = ch["price"]
-            if ch.get("uom"):
-                charge_obj["UOM"] = ch["uom"]
-
-            # Tiered pricing support
-            if ch.get("tiers"):
-                charge_obj["ProductRatePlanChargeTierData"] = {
-                    "ProductRatePlanChargeTier": ch["tiers"]
-                }
-
-            objects.append(charge_obj)
-
-    # Create the Commerce API payload
-    commerce_payload = {
-        "payload": {
-            "objects": objects,
-            "_commerce_api_endpoint": "POST /commerce/products",
-            "_commerce_api_method": "POST"
-        },
-        "zuora_api_type": "commerce_product_nested",
-        "payload_id": str(uuid.uuid4())[:8]
+    product_payload = {
+        "payload": payload_data,
+        "zuora_api_type": "product_create",
+        "payload_id": str(uuid.uuid4())[:8],
+        "_endpoint": "POST /v1/catalog/products",
+        "_method": "POST"
     }
 
-    payloads.append(commerce_payload)
+    payloads.append(product_payload)
     tool_context.agent.state.set(PAYLOADS_STATE_KEY, payloads)
 
-    # Generate reference documentation
-    ref_doc = format_payload_with_references(objects)
+    return f"""<h3>Generated Product Creation Payload</h3>
 
-    output = f"""<h3>Commerce API Product Payload Created</h3>
+<p><strong>Product:</strong> {name}</p>
+<p><strong>SKU:</strong> {sku}</p>
+<p><strong>Endpoint:</strong> <code>POST /v1/catalog/products</code></p>
 
-<p><strong>Product:</strong> {product_name} (SKU: {sku})</p>
-<p><strong>Rate Plans:</strong> {len(rate_plans)}</p>
-<p><strong>Total Objects:</strong> {len(objects)}</p>
-
-<h4>API Endpoint</h4>
-<p><code>POST /commerce/products</code></p>
-
-{ref_doc}
+<h4>Payload</h4>
+<pre><code>{json.dumps(payload_data, indent=2)}</code></pre>
 
 <h4>Next Steps</h4>
 <ol>
-  <li>Review the payload in <code>zuora_api_payloads</code></li>
-  <li>Execute the payload against the Zuora Commerce API</li>
-  <li>Use the returned IDs to create subscriptions</li>
+  <li>Review the payload above</li>
+  <li>Execute: <code>POST /v1/catalog/products</code> with the payload body</li>
+  <li><strong>Save the returned product ID</strong> - you'll need it to create rate plans</li>
 </ol>
 
-<p><em>Note: The @{{Reference.Id}} placeholders will be resolved by Zuora when the product is created.</em></p>"""
-
-    return output
+<p><strong>Payload ID:</strong> <code>{product_payload['payload_id']}</code></p>
+<p><em>Note: This payload has been added to zuora_api_payloads in the response.</em></p>"""
 
 
 @tool(context=True)
-def create_charge_with_dynamic_pricing(
+def create_rate_plan(
     tool_context: ToolContext,
-    rate_plan_id: str,
-    charge_name: str,
-    charge_type: Literal["Recurring", "OneTime", "Usage"],
-    charge_model: Literal["FlatFee", "PerUnit", "Tiered", "Volume"] = "FlatFee",
-    pricing_formula: Optional[str] = None,
-    default_price: float = 0.0,
-    billing_period: Optional[str] = None,
-    billing_timing: str = "InAdvance",
-    uom: Optional[str] = None
+    product_id: str,
+    name: str,
+    description: Optional[str] = None,
+    effective_start_date: Optional[str] = None,
+    effective_end_date: Optional[str] = None
 ) -> str:
     """
-    Create a charge with Dynamic Pricing using Commerce API.
+    Generate a payload to create a rate plan for an existing product.
 
-    Dynamic Pricing allows fieldLookup() expressions for customer-specific pricing.
+    The payload will be added to zuora_api_payloads for manual execution.
 
     Args:
-        rate_plan_id: Parent rate plan ID
-        charge_name: Name of the charge
-        charge_type: Charge type - Recurring, OneTime, or Usage
-        charge_model: Pricing model - FlatFee, PerUnit, Tiered, or Volume
-        pricing_formula: fieldLookup expression, e.g., "fieldLookup('Account.Price__c')"
-        default_price: Fallback price when dynamic lookup fails
-        billing_period: Billing period (Month, Quarter, Annual, etc.) - required for Recurring
-        billing_timing: When to bill (InAdvance, InArrears)
-        uom: Unit of measure (required for Usage charges)
+        product_id: Parent product ID (from Zuora, e.g., "8a12345...")
+        name: Rate plan name
+        description: Optional rate plan description
+        effective_start_date: Optional start date (defaults to product start date)
+        effective_end_date: Optional end date
 
     Returns:
-        HTML-formatted confirmation with dynamic pricing configuration.
+        Confirmation with payload details for manual execution
     """
+    import re
+    from datetime import datetime
+
+    # Validate product_id format (Zuora IDs typically start with alphanumeric)
+    if not product_id or len(product_id) < 10:
+        return f"❌ Invalid product_id. Provide the product ID from Zuora (e.g., '8a1234567890abcd')"
+
+    # Validate date formats if provided
+    date_pattern = r'^\d{4}-\d{2}-\d{2}$'
+    if effective_start_date and not re.match(date_pattern, effective_start_date):
+        return f"❌ Invalid date format for effective_start_date. Use YYYY-MM-DD format"
+
+    if effective_end_date and not re.match(date_pattern, effective_end_date):
+        return f"❌ Invalid date format for effective_end_date. Use YYYY-MM-DD format"
+
+    # Validate end date is after start date
+    if effective_start_date and effective_end_date:
+        try:
+            start = datetime.strptime(effective_start_date, "%Y-%m-%d")
+            end = datetime.strptime(effective_end_date, "%Y-%m-%d")
+            if end <= start:
+                return f"❌ effective_end_date must be after effective_start_date"
+        except ValueError as e:
+            return f"❌ Invalid date: {str(e)}"
+
     payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
 
-    charge_payload = {
-        "Name": charge_name,
-        "ProductRatePlanId": rate_plan_id,
-        "ChargeModel": charge_model,
-        "ChargeType": charge_type,
-        "BillingTiming": billing_timing,
+    # Build rate plan payload
+    payload_data = {
+        "productId": product_id,
+        "name": name
     }
 
-    if billing_period:
-        charge_payload["BillingPeriod"] = billing_period
+    if description:
+        payload_data["description"] = description
+    if effective_start_date:
+        payload_data["effectiveStartDate"] = effective_start_date
+    if effective_end_date:
+        payload_data["effectiveEndDate"] = effective_end_date
 
-    if uom:
-        charge_payload["UOM"] = uom
-
-    # Add dynamic pricing configuration
-    if pricing_formula:
-        charge_payload["Price"] = pricing_formula
-        charge_payload["_dynamic_pricing"] = {
-            "pricingType": "Dynamic",
-            "formula": pricing_formula,
-            "defaultPrice": default_price
-        }
-    else:
-        charge_payload["Price"] = default_price
-
-    commerce_payload = {
-        "payload": {
-            "charge": charge_payload,
-            "_commerce_api_endpoint": "POST /commerce/product-rate-plan-charges",
-            "_commerce_api_method": "POST"
-        },
-        "zuora_api_type": "commerce_charge_dynamic_pricing",
-        "payload_id": str(uuid.uuid4())[:8]
+    rate_plan_payload = {
+        "payload": payload_data,
+        "zuora_api_type": "rate_plan_create",
+        "payload_id": str(uuid.uuid4())[:8],
+        "_endpoint": "POST /v1/catalog/product-rate-plans",
+        "_method": "POST"
     }
 
-    payloads.append(commerce_payload)
+    payloads.append(rate_plan_payload)
     tool_context.agent.state.set(PAYLOADS_STATE_KEY, payloads)
 
-    pricing_display = pricing_formula if pricing_formula else f"${default_price}"
+    return f"""<h3>Generated Rate Plan Creation Payload</h3>
 
-    output = f"""<h3>Dynamic Pricing Charge Payload Created</h3>
+<p><strong>Rate Plan:</strong> {name}</p>
+<p><strong>Product ID:</strong> <code>{product_id}</code></p>
+<p><strong>Endpoint:</strong> <code>POST /v1/catalog/product-rate-plans</code></p>
 
-<p><strong>Charge Name:</strong> {charge_name}</p>
-<p><strong>Rate Plan ID:</strong> <code>{rate_plan_id}</code></p>
-<p><strong>Charge Type:</strong> {charge_type}</p>
-<p><strong>Charge Model:</strong> {charge_model}</p>
-<p><strong>Pricing:</strong> <code>{pricing_display}</code></p>
+<h4>Payload</h4>
+<pre><code>{json.dumps(payload_data, indent=2)}</code></pre>
 
-<h4>API Endpoint</h4>
-<p><code>POST /commerce/product-rate-plan-charges</code></p>
-
-<h4>Dynamic Pricing Configuration</h4>
-<ul>
-  <li><strong>Formula:</strong> <code>{pricing_formula or 'None (static price)'}</code></li>
-  <li><strong>Default Price:</strong> ${default_price}</li>
-</ul>
-
-<h4>How Dynamic Pricing Works</h4>
+<h4>Next Steps</h4>
 <ol>
-  <li>At subscription creation/amendment, Zuora evaluates the <code>fieldLookup()</code> expression</li>
-  <li>The expression retrieves the value from the specified Account/Subscription custom field</li>
-  <li>If the field is empty or the lookup fails, the default price is used</li>
+  <li>Review the payload above</li>
+  <li>Execute: <code>POST /v1/catalog/product-rate-plans</code> with the payload body</li>
+  <li><strong>Save the returned rate plan ID</strong> - you'll need it to create charges</li>
 </ol>
 
-<p><em>Example: <code>fieldLookup('Account.CustomerPrice__c')</code> reads the CustomerPrice__c field from the Account.</em></p>"""
+<p><strong>Payload ID:</strong> <code>{rate_plan_payload['payload_id']}</code></p>
+<p><em>Note: This payload has been added to zuora_api_payloads in the response.</em></p>"""
 
-    return output
+
+@tool(context=True)
+def create_charge(
+    tool_context: ToolContext,
+    rate_plan_id: str,
+    name: str,
+    charge_type: Literal["Recurring", "OneTime", "Usage"],
+    charge_model: Literal["FlatFee", "PerUnit", "Tiered", "Volume"],
+    price: Optional[float] = None,
+    billing_period: Optional[Literal["Month", "Quarter", "Annual", "Week", "Day"]] = None,
+    billing_timing: Literal["InAdvance", "InArrears"] = "InAdvance",
+    uom: Optional[str] = None,
+    description: Optional[str] = None
+) -> str:
+    """
+    Generate a payload to create a charge for an existing rate plan.
+
+    The payload will be added to zuora_api_payloads for manual execution.
+
+    Args:
+        rate_plan_id: Parent rate plan ID (from Zuora, e.g., "8a12345...")
+        name: Charge name
+        charge_type: Recurring, OneTime, or Usage
+        charge_model: Pricing model - FlatFee, PerUnit, Tiered, or Volume
+        price: Price amount (required for FlatFee and PerUnit models)
+        billing_period: Required for Recurring charges (Month, Quarter, Annual, Week, Day)
+        billing_timing: When to bill - InAdvance or InArrears
+        uom: Unit of measure (required for Usage charges, e.g., "API_CALL")
+        description: Optional charge description
+
+    Returns:
+        Confirmation with payload details for manual execution
+    """
+    # Validate rate_plan_id
+    if not rate_plan_id or len(rate_plan_id) < 10:
+        return f"❌ Invalid rate_plan_id. Provide the rate plan ID from Zuora"
+
+    # Validate charge configuration
+    validation_errors = []
+
+    # Recurring charges require billing_period
+    if charge_type == "Recurring" and not billing_period:
+        validation_errors.append("Recurring charges require billing_period (Month, Quarter, Annual, Week, or Day)")
+
+    # Usage charges require uom
+    if charge_type == "Usage" and not uom:
+        validation_errors.append("Usage charges require uom (unit of measure, e.g., 'API_CALL', 'GB', 'TRANSACTION')")
+
+    # FlatFee and PerUnit charges require price
+    if charge_model in ["FlatFee", "PerUnit"] and price is None:
+        validation_errors.append(f"{charge_model} charges require a price amount")
+
+    # Tiered and Volume charges should not have a simple price (they use tier data)
+    if charge_model in ["Tiered", "Volume"] and price is not None:
+        validation_errors.append(f"{charge_model} charges use tier pricing. Do not specify a simple price. Use the generic create_payload tool for tiered pricing.")
+
+    if validation_errors:
+        error_msg = "<br>".join(f"• {err}" for err in validation_errors)
+        return f"""<h3>❌ Validation Error</h3>
+
+<p><strong>Invalid charge configuration:</strong></p>
+{error_msg}
+
+<p><strong>Examples:</strong></p>
+<ul>
+  <li><strong>Recurring FlatFee:</strong> charge_type="Recurring", charge_model="FlatFee", price=99.99, billing_period="Month"</li>
+  <li><strong>Usage PerUnit:</strong> charge_type="Usage", charge_model="PerUnit", price=0.01, uom="API_CALL"</li>
+  <li><strong>OneTime FlatFee:</strong> charge_type="OneTime", charge_model="FlatFee", price=199.99</li>
+</ul>"""
+
+    payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
+
+    # Build charge payload
+    payload_data = {
+        "productRatePlanId": rate_plan_id,
+        "name": name,
+        "chargeType": charge_type,
+        "chargeModel": charge_model,
+        "billingTiming": billing_timing
+    }
+
+    if description:
+        payload_data["description"] = description
+    if price is not None:
+        payload_data["price"] = price
+    if billing_period:
+        payload_data["billingPeriod"] = billing_period
+    if uom:
+        payload_data["uom"] = uom
+
+    charge_payload = {
+        "payload": payload_data,
+        "zuora_api_type": "charge_create",
+        "payload_id": str(uuid.uuid4())[:8],
+        "_endpoint": "POST /v1/catalog/product-rate-plan-charges",
+        "_method": "POST"
+    }
+
+    payloads.append(charge_payload)
+    tool_context.agent.state.set(PAYLOADS_STATE_KEY, payloads)
+
+    return f"""<h3>Generated Charge Creation Payload</h3>
+
+<p><strong>Charge:</strong> {name}</p>
+<p><strong>Type:</strong> {charge_type} / {charge_model}</p>
+<p><strong>Rate Plan ID:</strong> <code>{rate_plan_id}</code></p>
+<p><strong>Endpoint:</strong> <code>POST /v1/catalog/product-rate-plan-charges</code></p>
+
+<h4>Payload</h4>
+<pre><code>{json.dumps(payload_data, indent=2)}</code></pre>
+
+<h4>Next Steps</h4>
+<ol>
+  <li>Review the payload above</li>
+  <li>Execute: <code>POST /v1/catalog/product-rate-plan-charges</code> with the payload body</li>
+  <li>The charge will be active on new subscriptions using this rate plan</li>
+</ol>
+
+<p><strong>Payload ID:</strong> <code>{charge_payload['payload_id']}</code></p>
+<p><em>Note: This payload has been added to zuora_api_payloads in the response.</em></p>"""
 
 
 # ============ Billing Architect Advisory Tools ============

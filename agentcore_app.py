@@ -1,6 +1,8 @@
 from bedrock_agentcore import BedrockAgentCoreApp
 from typing import List, Dict, TYPE_CHECKING
 import uuid
+import time
+from agents.observability import initialize_observability, get_tracer, get_metrics_collector, trace_function
 
 # Lazy imports - these are slow due to strands library
 # Only import when actually needed (inside invoke function)
@@ -63,96 +65,157 @@ def generate_mock_citations(persona: str) -> List[dict]:
 
 
 @app.entrypoint
+@trace_function(span_name="agentcore.invoke", attributes={"component": "entrypoint"})
 def invoke(payload: dict) -> dict:
     """
     AgentCore entry point for Zuora Seed Agent with /chat API contract.
     Supports multiple personas: ProductManager, BillingArchitect
     """
+    # Initialize observability (safe to call multiple times)
+    initialize_observability()
+    tracer = get_tracer()
+    metrics = get_metrics_collector()
+    start_time = time.time()
+
     # Lazy import - only load heavy modules when actually invoked
     from agents.models import ChatRequest, ChatResponse, ZuoraApiPayload
 
+    persona = payload.get("persona", "unknown")
+
     try:
-        # Parse and validate request
-        request = ChatRequest(**payload)
+        # Phase 1: Parse and validate request
+        with tracer.start_as_current_span("request.parse") as span:
+            try:
+                request = ChatRequest(**payload)
+                span.set_attribute("persona", request.persona)
+                span.set_attribute("has_payloads", len(request.zuora_api_payloads) > 0)
+                span.set_attribute("message_length", len(request.message))
+                persona = request.persona
+            except Exception as e:
+                span.set_attribute("error", True)
+                span.record_exception(e)
+                # Return error response matching ChatResponse structure
+                error_conversation_id = payload.get("conversation_id") or str(uuid.uuid4())
+                total_duration_ms = (time.time() - start_time) * 1000
+                metrics.record_request(persona, total_duration_ms, success=False)
+                return {
+                    "conversation_id": error_conversation_id,
+                    "answer": f"Error: Invalid request format - {str(e)}",
+                    "citations": [],
+                    "zuora_api_payloads": payload.get("zuora_api_payloads", [])
+                }
+
+        # Generate or use existing conversation ID
+        conversation_id = request.conversation_id or str(uuid.uuid4())
+
+        # Phase 2: Get persona-specific agent
+        with tracer.start_as_current_span("agent.get_or_create") as span:
+            span.set_attribute("persona", persona)
+            span.set_attribute("conversation_id", conversation_id)
+            agent = get_agent_for_persona(persona)
+
+        # Phase 3: Initialize agent state
+        with tracer.start_as_current_span("state.initialize") as span:
+            payloads_data = [p.model_dump() for p in request.zuora_api_payloads]
+            span.set_attribute("num_payloads", len(payloads_data))
+            agent.state.set(PAYLOADS_STATE_KEY, payloads_data)
+
+            # Clear advisory payloads for Billing Architect sessions
+            if persona == "BillingArchitect":
+                agent.state.set(ADVISORY_PAYLOADS_STATE_KEY, [])
+
+        # Phase 4: Build context-aware prompt
+        with tracer.start_as_current_span("prompt.build") as span:
+            prompt_parts = [f"User ({persona}): {request.message}"]
+
+            if request.zuora_api_payloads:
+                payload_types = set(p.zuora_api_type.value for p in request.zuora_api_payloads)
+                prompt_parts.append(
+                    f"\n[Context: {len(request.zuora_api_payloads)} Zuora API payload(s) are available. "
+                    f"Types: {', '.join(payload_types)}. Use get_payloads() to view them.]"
+                )
+
+            # Add persona-specific context hints
+            if persona == "BillingArchitect":
+                prompt_parts.append(
+                    "\n[Mode: Advisory Only - Generate configurations and guidance. Do NOT execute write API calls.]"
+                )
+
+            full_prompt = "\n".join(prompt_parts)
+            span.set_attribute("prompt_length", len(full_prompt))
+
+        # Phase 5: Invoke agent (CRITICAL SPAN)
+        with tracer.start_as_current_span("agent.invoke") as span:
+            span.set_attribute("persona", persona)
+            span.set_attribute("conversation_id", conversation_id)
+
+            invoke_start = time.time()
+            try:
+                response = agent(full_prompt, session_id=conversation_id)
+                invoke_duration_ms = (time.time() - invoke_start) * 1000
+                span.set_attribute("duration_ms", invoke_duration_ms)
+                span.set_attribute("success", True)
+
+                # Record successful agent invocation
+                metrics.record_agent_invocation(persona, invoke_duration_ms, success=True)
+
+                raw_answer = str(response)
+                # Convert markdown to HTML for formatted output
+                from agents.html_formatter import markdown_to_html
+                answer = markdown_to_html(raw_answer)
+
+            except Exception as e:
+                invoke_duration_ms = (time.time() - invoke_start) * 1000
+                span.set_attribute("duration_ms", invoke_duration_ms)
+                span.set_attribute("error", True)
+                span.record_exception(e)
+
+                # Record failed agent invocation
+                metrics.record_agent_invocation(persona, invoke_duration_ms, success=False)
+
+                answer = f"<p>Error processing request: {str(e)}</p>"
+
+        # Phase 6: Build response
+        with tracer.start_as_current_span("response.build") as span:
+            # Extract modified payloads from agent state
+            modified_payloads_data = agent.state.get(PAYLOADS_STATE_KEY) or []
+            modified_payloads = []
+            for p in modified_payloads_data:
+                try:
+                    modified_payloads.append(ZuoraApiPayload(**p))
+                except Exception:
+                    # If payload doesn't validate, include as-is with raw data
+                    modified_payloads.append(ZuoraApiPayload(
+                        payload=p.get("payload", {}),
+                        zuora_api_type=p.get("zuora_api_type", "product"),
+                        payload_id=p.get("payload_id")
+                    ))
+
+            # Generate persona-specific citations
+            citations = generate_mock_citations(persona)
+
+            # Build and return response
+            chat_response = ChatResponse(
+                conversation_id=conversation_id,
+                answer=answer,
+                citations=citations,
+                zuora_api_payloads=modified_payloads
+            )
+
+            span.set_attribute("num_modified_payloads", len(modified_payloads))
+            span.set_attribute("num_citations", len(citations))
+
+        # Record successful request
+        total_duration_ms = (time.time() - start_time) * 1000
+        metrics.record_request(persona, total_duration_ms, success=True)
+
+        return chat_response.model_dump()
+
     except Exception as e:
-        # Return error response matching ChatResponse structure
-        error_conversation_id = payload.get("conversation_id") or str(uuid.uuid4())
-        return {
-            "conversation_id": error_conversation_id,
-            "answer": f"Error: Invalid request format - {str(e)}",
-            "citations": [],
-            "zuora_api_payloads": payload.get("zuora_api_payloads", [])
-        }
-
-    # Generate or use existing conversation ID
-    conversation_id = request.conversation_id or str(uuid.uuid4())
-
-    # Get persona-specific agent
-    persona = request.persona
-    agent = get_agent_for_persona(persona)
-
-    # Initialize agent state with payloads
-    payloads_data = [p.model_dump() for p in request.zuora_api_payloads]
-    agent.state.set(PAYLOADS_STATE_KEY, payloads_data)
-
-    # Clear advisory payloads for Billing Architect sessions
-    if persona == "BillingArchitect":
-        agent.state.set(ADVISORY_PAYLOADS_STATE_KEY, [])
-
-    # Build context-aware prompt
-    prompt_parts = [f"User ({persona}): {request.message}"]
-
-    if request.zuora_api_payloads:
-        payload_types = set(p.zuora_api_type.value for p in request.zuora_api_payloads)
-        prompt_parts.append(
-            f"\n[Context: {len(request.zuora_api_payloads)} Zuora API payload(s) are available. "
-            f"Types: {', '.join(payload_types)}. Use get_payloads() to view them.]"
-        )
-
-    # Add persona-specific context hints
-    if persona == "BillingArchitect":
-        prompt_parts.append(
-            "\n[Mode: Advisory Only - Generate configurations and guidance. Do NOT execute write API calls.]"
-        )
-
-    full_prompt = "\n".join(prompt_parts)
-
-    # Invoke agent
-    try:
-        response = agent(full_prompt, session_id=conversation_id)
-        raw_answer = str(response)
-        # Convert markdown to HTML for formatted output
-        from agents.html_formatter import markdown_to_html
-        answer = markdown_to_html(raw_answer)
-    except Exception as e:
-        answer = f"<p>Error processing request: {str(e)}</p>"
-
-    # Extract modified payloads from agent state
-    modified_payloads_data = agent.state.get(PAYLOADS_STATE_KEY) or []
-    modified_payloads = []
-    for p in modified_payloads_data:
-        try:
-            modified_payloads.append(ZuoraApiPayload(**p))
-        except Exception:
-            # If payload doesn't validate, include as-is with raw data
-            modified_payloads.append(ZuoraApiPayload(
-                payload=p.get("payload", {}),
-                zuora_api_type=p.get("zuora_api_type", "product"),
-                payload_id=p.get("payload_id")
-            ))
-
-    # Generate persona-specific citations
-    citations = generate_mock_citations(persona)
-
-    # Build and return response
-    chat_response = ChatResponse(
-        conversation_id=conversation_id,
-        answer=answer,
-        citations=citations,
-        zuora_api_payloads=modified_payloads
-    )
-
-    return chat_response.model_dump()
+        # Record failed request
+        total_duration_ms = (time.time() - start_time) * 1000
+        metrics.record_request(persona, total_duration_ms, success=False)
+        raise
 
 
 if __name__ == "__main__":
