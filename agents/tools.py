@@ -38,6 +38,30 @@ def get_current_date() -> str:
     return f"Today's date is: {today}"
 
 
+@tool
+def get_zuora_environment_info() -> str:
+    """Get information about the connected Zuora environment including available
+    charge models, billing periods, currencies, and billing rules.
+
+    Call this to understand what options are available in the current Zuora tenant
+    before generating payloads.
+    """
+    from .zuora_settings import get_environment_summary
+
+    # Check connection first
+    client = get_zuora_client()
+    connection = client.check_connection()
+
+    if not connection.get("connected"):
+        return f"Not connected to Zuora: {connection.get('message')}"
+
+    env_info = f"**Connected to:** {connection.get('environment', 'unknown').upper()}\n"
+    env_info += f"**Base URL:** {connection.get('base_url', 'N/A')}\n\n"
+    env_info += get_environment_summary()
+
+    return env_info
+
+
 # ============ Payload State Keys ============
 PAYLOADS_STATE_KEY = "zuora_api_payloads"
 

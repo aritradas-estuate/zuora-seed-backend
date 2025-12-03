@@ -2,16 +2,22 @@
 Zuora API Client with OAuth authentication.
 Handles product catalog queries and updates via v1 Catalog API.
 """
+
 import time
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from typing import Optional, Dict, Any, List
 from .config import (
-    ZUORA_CLIENT_ID, ZUORA_CLIENT_SECRET, ZUORA_ENV,
-    ZUORA_API_CACHE_ENABLED, ZUORA_API_RETRY_ATTEMPTS,
-    ZUORA_API_RETRY_BACKOFF_FACTOR, ZUORA_API_CONNECTION_POOL_SIZE,
-    ZUORA_API_REQUEST_TIMEOUT, ZUORA_OAUTH_TIMEOUT
+    ZUORA_CLIENT_ID,
+    ZUORA_CLIENT_SECRET,
+    ZUORA_ENV,
+    ZUORA_API_CACHE_ENABLED,
+    ZUORA_API_RETRY_ATTEMPTS,
+    ZUORA_API_RETRY_BACKOFF_FACTOR,
+    ZUORA_API_CONNECTION_POOL_SIZE,
+    ZUORA_API_REQUEST_TIMEOUT,
+    ZUORA_OAUTH_TIMEOUT,
 )
 from .cache import get_cache
 from .observability import get_tracer, get_metrics_collector, trace_function
@@ -66,14 +72,14 @@ class ZuoraClient:
             backoff_factor=ZUORA_API_RETRY_BACKOFF_FACTOR,
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["GET", "POST", "PUT"],
-            raise_on_status=False
+            raise_on_status=False,
         )
 
         # Mount adapter with connection pooling
         adapter = HTTPAdapter(
             pool_connections=ZUORA_API_CONNECTION_POOL_SIZE,
             pool_maxsize=ZUORA_API_CONNECTION_POOL_SIZE,
-            max_retries=retry_strategy
+            max_retries=retry_strategy,
         )
         session.mount("http://", adapter)
         session.mount("https://", adapter)
@@ -90,7 +96,9 @@ class ZuoraClient:
         """Check if we have a valid token."""
         return self._access_token is not None and time.time() < self._token_expires_at
 
-    @trace_function(span_name="zuora.oauth.authenticate", attributes={"component": "oauth"})
+    @trace_function(
+        span_name="zuora.oauth.authenticate", attributes={"component": "oauth"}
+    )
     def authenticate(self) -> Dict[str, Any]:
         """
         Authenticate with Zuora OAuth and obtain access token.
@@ -101,7 +109,7 @@ class ZuoraClient:
         if not self.is_configured:
             return {
                 "success": False,
-                "message": "Zuora credentials not configured. Please set ZUORA_CLIENT_ID and ZUORA_CLIENT_SECRET."
+                "message": "Zuora credentials not configured. Please set ZUORA_CLIENT_ID and ZUORA_CLIENT_SECRET.",
             }
 
         # Check cache for existing token
@@ -115,7 +123,7 @@ class ZuoraClient:
                     "success": True,
                     "message": f"Connected to Zuora {self.env.upper()} environment (cached).",
                     "environment": self.env,
-                    "base_url": self.base_url
+                    "base_url": self.base_url,
                 }
             self.metrics.record_cache_miss("oauth")
 
@@ -125,14 +133,14 @@ class ZuoraClient:
                 f"{self.base_url}/oauth/token",
                 headers={
                     "Content-Type": "application/x-www-form-urlencoded",
-                    "Accept": "application/json"
+                    "Accept": "application/json",
                 },
                 data={
                     "client_id": self.client_id,
                     "client_secret": self.client_secret,
-                    "grant_type": "client_credentials"
+                    "grant_type": "client_credentials",
                 },
-                timeout=ZUORA_OAUTH_TIMEOUT
+                timeout=ZUORA_OAUTH_TIMEOUT,
             )
 
             duration_ms = (time.time() - start_time) * 1000
@@ -148,7 +156,7 @@ class ZuoraClient:
                 if self.cache:
                     token_data = {
                         "access_token": self._access_token,
-                        "expires_at": self._token_expires_at
+                        "expires_at": self._token_expires_at,
                     }
                     # Cache with TTL matching token expiry
                     self.cache.set("oauth", "/token", token_data, ttl=expires_in - 300)
@@ -159,25 +167,28 @@ class ZuoraClient:
                     "success": True,
                     "message": f"Connected to Zuora {self.env.upper()} environment.",
                     "environment": self.env,
-                    "base_url": self.base_url
+                    "base_url": self.base_url,
                 }
             else:
-                error_msg = response.json().get("message", response.text) if response.text else f"HTTP {response.status_code}"
+                error_msg = (
+                    response.json().get("message", response.text)
+                    if response.text
+                    else f"HTTP {response.status_code}"
+                )
                 self.metrics.record_api_call("POST", "/oauth/token", duration_ms, False)
-                self.metrics.record_api_error("POST", "/oauth/token", f"http_{response.status_code}")
+                self.metrics.record_api_error(
+                    "POST", "/oauth/token", f"http_{response.status_code}"
+                )
                 return {
                     "success": False,
-                    "message": f"Authentication failed: {error_msg}"
+                    "message": f"Authentication failed: {error_msg}",
                 }
 
         except requests.RequestException as e:
             duration_ms = (time.time() - start_time) * 1000
             self.metrics.record_api_call("POST", "/oauth/token", duration_ms, False)
             self.metrics.record_api_error("POST", "/oauth/token", type(e).__name__)
-            return {
-                "success": False,
-                "message": f"Connection error: {str(e)}"
-            }
+            return {"success": False, "message": f"Connection error: {str(e)}"}
 
     def _ensure_authenticated(self) -> bool:
         """Ensure we have a valid token, refreshing if needed."""
@@ -192,7 +203,7 @@ class ZuoraClient:
         endpoint: str,
         data: Optional[Dict] = None,
         params: Optional[Dict] = None,
-        use_cache: bool = True
+        use_cache: bool = True,
     ) -> Dict[str, Any]:
         """
         Make an authenticated request to Zuora API.
@@ -230,7 +241,7 @@ class ZuoraClient:
             headers = {
                 "Authorization": f"Bearer {self._access_token}",
                 "Content-Type": "application/json",
-                "Accept": "application/json"
+                "Accept": "application/json",
             }
 
             start_time = time.time()
@@ -241,7 +252,7 @@ class ZuoraClient:
                     headers=headers,
                     json=data,
                     params=params,
-                    timeout=ZUORA_API_REQUEST_TIMEOUT
+                    timeout=ZUORA_API_REQUEST_TIMEOUT,
                 )
 
                 duration_ms = (time.time() - start_time) * 1000
@@ -261,13 +272,17 @@ class ZuoraClient:
                     error_data = response.json() if response.text else {}
                     result = {
                         "success": False,
-                        "error": error_data.get("message", f"HTTP {response.status_code}"),
-                        "details": error_data
+                        "error": error_data.get(
+                            "message", f"HTTP {response.status_code}"
+                        ),
+                        "details": error_data,
                     }
 
                     span.set_attribute("error", True)
                     self.metrics.record_api_call(method, endpoint, duration_ms, False)
-                    self.metrics.record_api_error(method, endpoint, f"http_{response.status_code}")
+                    self.metrics.record_api_error(
+                        method, endpoint, f"http_{response.status_code}"
+                    )
 
                     return result
 
@@ -311,7 +326,9 @@ class ZuoraClient:
         Returns:
             List of products with pagination info
         """
-        return self._request("GET", "/v1/catalog/products", params={"pageSize": page_size})
+        return self._request(
+            "GET", "/v1/catalog/products", params={"pageSize": page_size}
+        )
 
     @trace_function(span_name="zuora.products.get", attributes={"operation": "get"})
     def get_product(self, product_key: str) -> Dict[str, Any]:
@@ -326,7 +343,9 @@ class ZuoraClient:
         """
         return self._request("GET", f"/v1/catalog/products/{product_key}")
 
-    @trace_function(span_name="zuora.products.get_by_name", attributes={"operation": "search"})
+    @trace_function(
+        span_name="zuora.products.get_by_name", attributes={"operation": "search"}
+    )
     def get_product_by_name(self, name: str) -> Dict[str, Any]:
         """
         Search for a product by name.
@@ -339,14 +358,16 @@ class ZuoraClient:
         """
         # Use query endpoint with name filter
         result = self._request(
-            "POST",
-            "/v1/catalog/query/products",
-            data={"name": name}
+            "POST", "/v1/catalog/query/products", data={"name": name}
         )
         return result
 
-    @trace_function(span_name="zuora.products.update", attributes={"operation": "update"})
-    def update_product(self, product_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+    @trace_function(
+        span_name="zuora.products.update", attributes={"operation": "update"}
+    )
+    def update_product(
+        self, product_id: str, updates: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """
         Update a product's attributes.
 
@@ -357,7 +378,9 @@ class ZuoraClient:
         Returns:
             Updated product or error
         """
-        result = self._request("PUT", f"/v1/catalog/products/{product_id}", data=updates, use_cache=False)
+        result = self._request(
+            "PUT", f"/v1/catalog/products/{product_id}", data=updates, use_cache=False
+        )
 
         # Invalidate cache for this product and list
         if result.get("success") and self.cache:
@@ -385,10 +408,7 @@ class ZuoraClient:
         product_result = self.get_product(product_id)
         if product_result.get("success"):
             product = product_result.get("data", {})
-            return {
-                "success": True,
-                "data": product.get("productRatePlans", [])
-            }
+            return {"success": True, "data": product.get("productRatePlans", [])}
         return product_result
 
     @trace_function(span_name="zuora.rate_plans.get", attributes={"operation": "get"})
@@ -404,8 +424,12 @@ class ZuoraClient:
         """
         return self._request("GET", f"/v1/catalog/product-rate-plans/{rate_plan_id}")
 
-    @trace_function(span_name="zuora.rate_plans.update", attributes={"operation": "update"})
-    def update_rate_plan(self, rate_plan_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+    @trace_function(
+        span_name="zuora.rate_plans.update", attributes={"operation": "update"}
+    )
+    def update_rate_plan(
+        self, rate_plan_id: str, updates: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """
         Update a rate plan's attributes.
 
@@ -416,11 +440,18 @@ class ZuoraClient:
         Returns:
             Updated rate plan or error
         """
-        result = self._request("PUT", f"/v1/catalog/product-rate-plans/{rate_plan_id}", data=updates, use_cache=False)
+        result = self._request(
+            "PUT",
+            f"/v1/catalog/product-rate-plans/{rate_plan_id}",
+            data=updates,
+            use_cache=False,
+        )
 
         # Invalidate cache for this rate plan
         if result.get("success") and self.cache:
-            self.cache.invalidate("GET", f"/v1/catalog/product-rate-plans/{rate_plan_id}")
+            self.cache.invalidate(
+                "GET", f"/v1/catalog/product-rate-plans/{rate_plan_id}"
+            )
 
         return result
 
@@ -444,7 +475,7 @@ class ZuoraClient:
             rate_plan = rate_plan_result.get("data", {})
             return {
                 "success": True,
-                "data": rate_plan.get("productRatePlanCharges", [])
+                "data": rate_plan.get("productRatePlanCharges", []),
             }
         return rate_plan_result
 
@@ -459,9 +490,13 @@ class ZuoraClient:
         Returns:
             Charge details or error
         """
-        return self._request("GET", f"/v1/catalog/product-rate-plan-charges/{charge_id}")
+        return self._request(
+            "GET", f"/v1/catalog/product-rate-plan-charges/{charge_id}"
+        )
 
-    @trace_function(span_name="zuora.charges.update", attributes={"operation": "update"})
+    @trace_function(
+        span_name="zuora.charges.update", attributes={"operation": "update"}
+    )
     def update_charge(self, charge_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
         """
         Update a charge's attributes.
@@ -475,11 +510,18 @@ class ZuoraClient:
         Returns:
             Updated charge or error
         """
-        result = self._request("PUT", f"/v1/catalog/product-rate-plan-charges/{charge_id}", data=updates, use_cache=False)
+        result = self._request(
+            "PUT",
+            f"/v1/catalog/product-rate-plan-charges/{charge_id}",
+            data=updates,
+            use_cache=False,
+        )
 
         # Invalidate cache for this charge
         if result.get("success") and self.cache:
-            self.cache.invalidate("GET", f"/v1/catalog/product-rate-plan-charges/{charge_id}")
+            self.cache.invalidate(
+                "GET", f"/v1/catalog/product-rate-plan-charges/{charge_id}"
+            )
 
         return result
 
@@ -487,7 +529,9 @@ class ZuoraClient:
     # Utility Methods
     # =========================================================================
 
-    @trace_function(span_name="zuora.connection.check", attributes={"operation": "check"})
+    @trace_function(
+        span_name="zuora.connection.check", attributes={"operation": "check"}
+    )
     def check_connection(self) -> Dict[str, Any]:
         """
         Check connection status and authenticate if needed.
@@ -500,7 +544,7 @@ class ZuoraClient:
                 "connected": True,
                 "environment": self.env,
                 "base_url": self.base_url,
-                "message": f"Connected to Zuora {self.env.upper()}"
+                "message": f"Connected to Zuora {self.env.upper()}",
             }
 
         auth_result = self.authenticate()
@@ -508,8 +552,47 @@ class ZuoraClient:
             "connected": auth_result.get("success", False),
             "environment": self.env,
             "base_url": self.base_url,
-            "message": auth_result.get("message", "Unknown error")
+            "message": auth_result.get("message", "Unknown error"),
         }
+
+    @trace_function(
+        span_name="zuora.settings.batch", attributes={"operation": "settings"}
+    )
+    def get_settings_batch(
+        self, requests: Optional[List[Dict[str, str]]] = None
+    ) -> Dict[str, Any]:
+        """
+        Fetch multiple settings in a single batch request.
+
+        Args:
+            requests: List of settings requests, each with 'id', 'method', 'url'.
+                      If None, fetches default environment settings.
+
+        Returns:
+            Batch response with all settings
+        """
+        if requests is None:
+            requests = [
+                {"id": "1", "method": "GET", "url": "/billing-rules"},
+                {"id": "2", "method": "GET", "url": "/accounting-rules"},
+                {"id": "3", "method": "GET", "url": "/currencies"},
+                {"id": "4", "method": "GET", "url": "/chart-of-accounts"},
+                {"id": "5", "method": "GET", "url": "/product-attributes"},
+                {"id": "6", "method": "GET", "url": "/charge-models"},
+                {"id": "7", "method": "GET", "url": "/billing-cycle-types"},
+                {"id": "8", "method": "GET", "url": "/billing-list-price-bases"},
+                {"id": "9", "method": "GET", "url": "/billing-period-starts"},
+                {"id": "10", "method": "GET", "url": "/billing-periods"},
+                {"id": "11", "method": "GET", "url": "/custom-object-namespaces"},
+                {"id": "12", "method": "GET", "url": "/discount-settings"},
+                {"id": "13", "method": "GET", "url": "/numbers-and-skus"},
+                {"id": "14", "method": "GET", "url": "/security-policies"},
+                {"id": "15", "method": "GET", "url": "/subscription-settings"},
+            ]
+
+        return self._request(
+            "POST", "/settings/batch-requests", data={"requests": requests}
+        )
 
 
 # Global client instance

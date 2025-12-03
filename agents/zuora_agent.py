@@ -1,8 +1,18 @@
+import logging
 from strands import Agent
 from strands.models import BedrockModel
 from .config import GEN_MODEL_ID
 from .observability import trace_function, get_tracer
+from .zuora_settings import (
+    fetch_environment_settings,
+    is_settings_loaded,
+    get_fetch_error,
+    get_environment_context_for_prompt,
+)
 from .tools import (
+    # Utility tools
+    get_current_date,
+    get_zuora_environment_info,
     # Payload tools
     get_payloads,
     update_payload,
@@ -32,6 +42,38 @@ from .tools import (
     validate_billing_configuration,
     get_zuora_documentation,
 )
+
+logger = logging.getLogger(__name__)
+
+
+# ============ Settings Initialization ============
+
+
+def _initialize_zuora_settings() -> None:
+    """
+    Eagerly fetch Zuora environment settings on agent startup.
+    Warns but continues if fetch fails.
+    """
+    logger.info("Initializing Zuora environment settings...")
+
+    try:
+        settings = fetch_environment_settings()
+
+        if "_error" in settings:
+            logger.warning(
+                f"Could not fetch Zuora settings: {settings['_error']}. "
+                "Agent will continue with default values."
+            )
+        else:
+            logger.info(
+                f"Loaded Zuora settings: {len(settings)} setting groups fetched."
+            )
+    except Exception as e:
+        logger.warning(
+            f"Exception during Zuora settings initialization: {e}. "
+            "Agent will continue with default values."
+        )
+
 
 # ============ System Prompts ============
 
@@ -215,6 +257,10 @@ Remember: As an advisor, you provide knowledge, not exploration. Minimize tool c
 
 # Tools available to all personas (read-only operations)
 SHARED_TOOLS = [
+    # Utility tools
+    get_current_date,
+    get_zuora_environment_info,
+    # Zuora connection and read tools
     connect_to_zuora,
     list_zuora_products,
     get_zuora_product,
@@ -267,6 +313,16 @@ def create_agent(persona: str) -> Agent:
     """
     tracer = get_tracer()
 
+    # Eagerly fetch Zuora settings (warn but continue on failure)
+    with tracer.start_as_current_span("agent.create.settings") as span:
+        _initialize_zuora_settings()
+        span.set_attribute("settings_loaded", is_settings_loaded())
+        if get_fetch_error():
+            span.set_attribute("settings_error", get_fetch_error())
+
+    # Get environment context to append to system prompts
+    environment_context = get_environment_context_for_prompt()
+
     with tracer.start_as_current_span("agent.create.model") as span:
         span.set_attribute("model_id", GEN_MODEL_ID)
         model = BedrockModel(
@@ -284,18 +340,22 @@ def create_agent(persona: str) -> Agent:
             tools = SHARED_TOOLS + BILLING_ARCHITECT_TOOLS
             span.set_attribute("num_tools", len(tools))
             span.set_attribute("system_prompt_type", "billing_architect")
+            # Append environment context to system prompt
+            system_prompt = BILLING_ARCHITECT_SYSTEM_PROMPT + environment_context
             return Agent(
                 model=model,
-                system_prompt=BILLING_ARCHITECT_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 tools=tools,
             )
         else:  # Default to ProductManager
             tools = SHARED_TOOLS + PROJECT_MANAGER_TOOLS
             span.set_attribute("num_tools", len(tools))
             span.set_attribute("system_prompt_type", "product_manager")
+            # Append environment context to system prompt
+            system_prompt = PROJECT_MANAGER_SYSTEM_PROMPT + environment_context
             return Agent(
                 model=model,
-                system_prompt=PROJECT_MANAGER_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 tools=tools,
             )
 
@@ -311,6 +371,10 @@ def get_default_agent() -> Agent:
     """Get or create the default agent (lazy initialization)."""
     global _default_agent
     if _default_agent is None:
+        # Initialize settings on first agent creation
+        _initialize_zuora_settings()
+        environment_context = get_environment_context_for_prompt()
+
         model = BedrockModel(
             model_id=GEN_MODEL_ID,
             streaming=False,  # Frontend cannot handle streaming
@@ -320,7 +384,7 @@ def get_default_agent() -> Agent:
         )
         _default_agent = Agent(
             model=model,
-            system_prompt=PROJECT_MANAGER_SYSTEM_PROMPT,
+            system_prompt=PROJECT_MANAGER_SYSTEM_PROMPT + environment_context,
             tools=ALL_TOOLS,
         )
     return _default_agent
