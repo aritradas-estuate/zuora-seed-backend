@@ -2,3 +2,6 @@ bedrock-agentcore
 strands-agents
 python-dotenv
 requests
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-otlp

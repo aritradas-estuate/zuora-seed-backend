@@ -3,12 +3,6 @@ from strands.models import BedrockModel
 from .config import GEN_MODEL_ID
 from .observability import trace_function, get_tracer
 from .tools import (
-    # Catalog tools (legacy/mock)
-    preview_product_setup,
-    create_product_in_catalog,
-    check_sandbox_connection,
-    list_enabled_currencies,
-    run_billing_simulation,
     # Payload tools
     get_payloads,
     update_payload,
@@ -121,12 +115,6 @@ PROJECT_MANAGER_TOOLS = [
     # Payload manipulation
     update_payload,
     create_payload,
-    # Legacy/mock tools
-    preview_product_setup,
-    create_product_in_catalog,
-    check_sandbox_connection,
-    list_enabled_currencies,
-    run_billing_simulation,
 ]
 
 # Tools specific to Billing Architect (advisory only)
@@ -144,6 +132,7 @@ BILLING_ARCHITECT_TOOLS = [
 
 # ============ Agent Factory ============
 
+
 @trace_function(span_name="agent.create", attributes={"component": "agent_factory"})
 def create_agent(persona: str) -> Agent:
     """
@@ -159,10 +148,7 @@ def create_agent(persona: str) -> Agent:
 
     with tracer.start_as_current_span("agent.create.model") as span:
         span.set_attribute("model_id", GEN_MODEL_ID)
-        model = BedrockModel(
-            model_id=GEN_MODEL_ID,
-            streaming=False
-        )
+        model = BedrockModel(model_id=GEN_MODEL_ID, streaming=False)
 
     with tracer.start_as_current_span("agent.create.configure") as span:
         span.set_attribute("persona", persona)
@@ -198,10 +184,7 @@ def get_default_agent() -> Agent:
     """Get or create the default agent (lazy initialization)."""
     global _default_agent
     if _default_agent is None:
-        model = BedrockModel(
-            model_id=GEN_MODEL_ID,
-            streaming=False
-        )
+        model = BedrockModel(model_id=GEN_MODEL_ID, streaming=False)
         _default_agent = Agent(
             model=model,
             system_prompt=PROJECT_MANAGER_SYSTEM_PROMPT,

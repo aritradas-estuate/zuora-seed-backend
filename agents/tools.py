@@ -18,8 +18,8 @@ REQUIRED_FIELDS = {
         "conditional": {},
         "descriptions": {
             "Name": "Product name",
-            "EffectiveStartDate": "Start date (YYYY-MM-DD format, e.g., 2024-01-01)"
-        }
+            "EffectiveStartDate": "Start date (YYYY-MM-DD format, e.g., 2024-01-01)",
+        },
     },
     "product_rate_plan": {
         "always": ["Name", "ProductId"],
@@ -27,8 +27,8 @@ REQUIRED_FIELDS = {
         "conditional": {},
         "descriptions": {
             "Name": "Rate plan name",
-            "ProductId": "Product ID (use @{Product.Id} to reference a product in the same payload)"
-        }
+            "ProductId": "Product ID (use @{Product.Id} to reference a product in the same payload)",
+        },
     },
     "product_rate_plan_charge": {
         "always": ["Name", "ProductRatePlanId", "ChargeModel", "ChargeType"],
@@ -39,7 +39,7 @@ REQUIRED_FIELDS = {
             "ChargeModel=FlatFee": ["Price"],
             "ChargeModel=PerUnit": ["Price"],
             "ChargeModel=Tiered": ["ProductRatePlanChargeTierData"],
-            "ChargeModel=Volume": ["ProductRatePlanChargeTierData"]
+            "ChargeModel=Volume": ["ProductRatePlanChargeTierData"],
         },
         "descriptions": {
             "Name": "Charge name",
@@ -49,14 +49,12 @@ REQUIRED_FIELDS = {
             "BillingPeriod": "Billing period for recurring charges (Month, Quarter, Annual)",
             "UOM": "Unit of measure for usage charges (e.g., API_CALL, GB, SMS)",
             "Price": "Price amount (numeric)",
-            "ProductRatePlanChargeTierData": "Tier pricing data for tiered/volume charges"
-        }
+            "ProductRatePlanChargeTierData": "Tier pricing data for tiered/volume charges",
+        },
     },
     "account": {
         "always": ["name", "currency", "billCycleDay"],
-        "nested": {
-            "billToContact": ["firstName", "lastName", "country"]
-        },
+        "nested": {"billToContact": ["firstName", "lastName", "country"]},
         "conditional": {},
         "descriptions": {
             "name": "Account name",
@@ -64,15 +62,18 @@ REQUIRED_FIELDS = {
             "billCycleDay": "Bill cycle day (1-31)",
             "billToContact.firstName": "Billing contact first name",
             "billToContact.lastName": "Billing contact last name",
-            "billToContact.country": "Billing contact country"
-        }
+            "billToContact.country": "Billing contact country",
+        },
     },
     "subscription": {
-        "always": ["accountKey", "contractEffectiveDate", "termType", "subscribeToRatePlans"],
+        "always": [
+            "accountKey",
+            "contractEffectiveDate",
+            "termType",
+            "subscribeToRatePlans",
+        ],
         "nested": {},
-        "conditional": {
-            "termType=TERMED": ["initialTerm", "renewalTerm", "autoRenew"]
-        },
+        "conditional": {"termType=TERMED": ["initialTerm", "renewalTerm", "autoRenew"]},
         "descriptions": {
             "accountKey": "Account ID or account number",
             "contractEffectiveDate": "Contract effective date (YYYY-MM-DD)",
@@ -80,8 +81,8 @@ REQUIRED_FIELDS = {
             "subscribeToRatePlans": "Array of rate plans with productRatePlanId",
             "initialTerm": "Initial term length in months (required for TERMED)",
             "renewalTerm": "Renewal term length in months (required for TERMED)",
-            "autoRenew": "Auto-renew flag true/false (required for TERMED)"
-        }
+            "autoRenew": "Auto-renew flag true/false (required for TERMED)",
+        },
     },
     "billrun": {
         "always": ["invoiceDate", "targetDate"],
@@ -89,8 +90,8 @@ REQUIRED_FIELDS = {
         "conditional": {},
         "descriptions": {
             "invoiceDate": "Invoice date (YYYY-MM-DD)",
-            "targetDate": "Target date for billing (YYYY-MM-DD)"
-        }
+            "targetDate": "Target date for billing (YYYY-MM-DD)",
+        },
     },
     "contact": {
         "always": ["firstName", "lastName", "country"],
@@ -99,9 +100,9 @@ REQUIRED_FIELDS = {
         "descriptions": {
             "firstName": "Contact first name",
             "lastName": "Contact last name",
-            "country": "Country name"
-        }
-    }
+            "country": "Country name",
+        },
+    },
 }
 
 
@@ -118,14 +119,25 @@ def _get_nested_value(data: Dict[str, Any], path: str) -> Any:
 
 
 def _check_field_exists(data: Dict[str, Any], field: str) -> bool:
-    """Check if a field exists in the payload (supports nested dot notation)."""
+    """Check if a field exists in the payload (supports nested dot notation and flexible casing)."""
     if "." in field:
         return _get_nested_value(data, field) is not None
-    # Check both PascalCase and camelCase versions
-    return field in data or field.lower() in {k.lower() for k in data.keys()}
+
+    # exact match
+    if field in data:
+        return True
+
+    # Case-insensitive and underscore-insensitive match
+    # e.g. "EffectiveStartDate" matches "effective_start_date" or "effectiveStartDate"
+    target = field.lower().replace("_", "")
+    existing_keys = {k.lower().replace("_", "") for k in data.keys()}
+
+    return target in existing_keys
 
 
-def validate_payload(api_type: str, payload_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
+def validate_payload(
+    api_type: str, payload_data: Dict[str, Any]
+) -> Tuple[bool, List[str]]:
     """
     Validate payload against required fields for the given API type.
 
@@ -188,13 +200,17 @@ def validate_payload(api_type: str, payload_data: Dict[str, Any]) -> Tuple[bool,
                 for field in conditional_fields:
                     if not _check_field_exists(payload_data, field):
                         desc = descriptions.get(field, field)
-                        cond_desc = f"{desc} (required because {cond_field}={cond_value})"
+                        cond_desc = (
+                            f"{desc} (required because {cond_field}={cond_value})"
+                        )
                         missing.append((field, cond_desc))
 
     return (len(missing) == 0, missing)
 
 
-def format_validation_questions(api_type: str, missing_fields: List[Tuple[str, str]]) -> str:
+def format_validation_questions(
+    api_type: str, missing_fields: List[Tuple[str, str]]
+) -> str:
     """
     Format missing fields as HTML clarifying questions.
 
@@ -210,70 +226,16 @@ def format_validation_questions(api_type: str, missing_fields: List[Tuple[str, s
     output += "<ol>\n"
 
     for field_name, description in missing_fields:
-        output += f"  <li>What is the <strong>{field_name}</strong>? ({description})</li>\n"
+        output += (
+            f"  <li>What is the <strong>{field_name}</strong>? ({description})</li>\n"
+        )
 
     output += "</ol>\n"
-    output += "<p><em>Please provide these details and I'll create the payload.</em></p>"
+    output += (
+        "<p><em>Please provide these details and I'll create the payload.</em></p>"
+    )
 
     return output
-
-
-# --- Mock Database ---
-products_db = {}
-
-def _generate_id(prefix: str) -> str:
-    return f"{prefix}-{int(datetime.datetime.now().timestamp() * 1000) % 100000}"
-
-# --- Tools ---
-
-@tool
-def preview_product_setup(spec: ProductSpec) -> str:
-    """
-    Analyzes the Product Specification and returns a validation summary.
-    """
-    issues = []
-    prod = spec.product
-    
-    # Validation Logic
-    for rp in prod.ratePlans:
-        for charge in rp.charges:
-            if charge.type == "Recurring" and not charge.billingPeriod:
-                issues.append(f"Charge '{charge.name}': Recurring charge missing 'billingPeriod'.")
-            
-            if charge.model == "Prepaid with Drawdown":
-                if (charge.autoTopupThreshold or 0) >= (charge.prepaidLoadAmount or 0):
-                    issues.append(f"Charge '{charge.name}': Top-up threshold must be < load amount.")
-
-    validation_msg = "✅ Validation Passed." if not issues else "❌ Validation Issues:\n" + "\n".join(issues)
-    
-    summary = f"Preview for '{prod.name}' (SKU: {prod.sku}):\n"
-    summary += f"Structure: {len(prod.ratePlans)} Rate Plans.\n"
-    for rp in prod.ratePlans:
-        summary += f"- Plan '{rp.name}': {len(rp.charges)} charges.\n"
-    
-    return f"{summary}\n{validation_msg}"
-
-@tool
-def create_product_in_catalog(spec: ProductSpec) -> str:
-    """
-    Creates the Product in the Zuora Catalog.
-    """
-    prod = spec.product
-    pid = _generate_id("P")
-    products_db[pid] = prod.model_dump()
-    return f"✅ Successfully created Product '{prod.name}' (ID: {pid})."
-
-@tool
-def check_sandbox_connection() -> str:
-    return "✅ Connected to Zuora Sandbox."
-
-@tool
-def list_enabled_currencies() -> str:
-    return "Enabled Currencies: USD, EUR, GBP, CAD."
-
-@tool
-def run_billing_simulation(product_sku: str, scenario: str) -> str:
-    return f"Simulation '{scenario}' for {product_sku} completed successfully."
 
 
 # ============ Payload State Keys ============
@@ -282,26 +244,17 @@ PAYLOADS_STATE_KEY = "zuora_api_payloads"
 
 # ============ Payload Manipulation Tools ============
 
+
 @tool(context=True)
-def get_payloads(
-    tool_context: ToolContext,
-    api_type: Optional[str] = None
-) -> str:
-    """
-    Retrieve the current Zuora API payloads from the conversation state.
-
-    Args:
-        api_type: Optional filter by API type (product, product_rate_plan, product_rate_plan_charge, product_rate_plan_charge_tier).
-                  If not provided, returns all payloads.
-
-    Returns:
-        JSON representation of the payloads.
-    """
+def get_payloads(tool_context: ToolContext, api_type: Optional[str] = None) -> str:
+    """Retrieve Zuora API payloads from state. Filter by api_type if provided."""
     payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
 
     if api_type:
         api_type_lower = api_type.lower()
-        payloads = [p for p in payloads if p.get("zuora_api_type", "").lower() == api_type_lower]
+        payloads = [
+            p for p in payloads if p.get("zuora_api_type", "").lower() == api_type_lower
+        ]
 
     if not payloads:
         return f"No payloads found" + (f" for type '{api_type}'" if api_type else "")
@@ -315,25 +268,15 @@ def update_payload(
     api_type: str,
     field_path: str,
     new_value: Any,
-    payload_index: int = 0
+    payload_index: int = 0,
 ) -> str:
-    """
-    Update a specific field in a Zuora API payload.
-
-    Args:
-        api_type: The API type of the payload to update (product, product_rate_plan, etc.)
-        field_path: Dot-notation path to the field (e.g., "name", "ratePlans.0.charges.0.price")
-        new_value: The new value to set
-        payload_index: Index of the payload if multiple exist for the same type (default: 0)
-
-    Returns:
-        Confirmation message with the updated payload.
-    """
+    """Update field in payload using dot notation (e.g., 'ratePlans.0.charges.0.price')."""
     payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
 
     # Find matching payloads
     matching_indices = [
-        i for i, p in enumerate(payloads)
+        i
+        for i, p in enumerate(payloads)
         if p.get("zuora_api_type", "").lower() == api_type.lower()
     ]
 
@@ -372,25 +315,13 @@ def update_payload(
 
 @tool(context=True)
 def create_payload(
-    tool_context: ToolContext,
-    api_type: str,
-    payload_data: Dict[str, Any]
+    tool_context: ToolContext, api_type: str, payload_data: Dict[str, Any]
 ) -> str:
-    """
-    Create a new Zuora API payload and add it to the conversation state.
-
-    This tool validates required fields before creating the payload.
-    If required fields are missing, it returns clarifying questions instead of creating the payload.
-
-    Args:
-        api_type: The API type for the new payload (product, product_rate_plan, product_rate_plan_charge, account, subscription, etc.)
-        payload_data: The payload data as a dictionary
-
-    Returns:
-        If validation fails: HTML-formatted clarifying questions for missing fields.
-        If validation passes: HTML-formatted confirmation with the created payload and reference guide.
-    """
-    from .html_formatter import generate_reference_documentation, format_payload_with_references
+    """Create new Zuora payload with validation."""
+    from .html_formatter import (
+        generate_reference_documentation,
+        format_payload_with_references,
+    )
 
     # Validate api_type
     valid_types = [t.value for t in ZuoraApiType]
@@ -410,7 +341,7 @@ def create_payload(
     new_payload = {
         "payload": payload_data,
         "zuora_api_type": api_type.lower(),
-        "payload_id": str(uuid.uuid4())[:8]
+        "payload_id": str(uuid.uuid4())[:8],
     }
 
     payloads.append(new_payload)
@@ -425,7 +356,9 @@ def create_payload(
         ref_doc = format_payload_with_references(payload_data["objects"])
         output += ref_doc
     # Check for nested rate plans in product payloads
-    elif api_type.lower() == "product" and ("productRatePlans" in payload_data or "ProductRatePlans" in payload_data):
+    elif api_type.lower() == "product" and (
+        "productRatePlans" in payload_data or "ProductRatePlans" in payload_data
+    ):
         ref_doc = generate_reference_documentation(payload_data)
         output += ref_doc
 
@@ -436,23 +369,14 @@ def create_payload(
 
 @tool(context=True)
 def list_payload_structure(
-    tool_context: ToolContext,
-    api_type: str,
-    payload_index: int = 0
+    tool_context: ToolContext, api_type: str, payload_index: int = 0
 ) -> str:
-    """
-    List the structure and fields of a specific payload to help understand what can be modified.
-
-    Args:
-        api_type: The API type of the payload to inspect
-        payload_index: Index if multiple payloads exist for the type (default: 0)
-
-    Returns:
-        A structured view of the payload's fields and their current values.
-    """
+    """List payload structure and fields."""
     payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
 
-    matching = [p for p in payloads if p.get("zuora_api_type", "").lower() == api_type.lower()]
+    matching = [
+        p for p in payloads if p.get("zuora_api_type", "").lower() == api_type.lower()
+    ]
 
     if not matching:
         return f"No payload found with type '{api_type}'"
@@ -483,20 +407,17 @@ def list_payload_structure(
         return lines
 
     structure = describe_structure(payload)
-    return f"Structure of {api_type} payload (index {payload_index}):\n" + "\n".join(structure)
+    return f"Structure of {api_type} payload (index {payload_index}):\n" + "\n".join(
+        structure
+    )
 
 
 # ============ Zuora API Tools (Real API Integration) ============
 
+
 @tool
 def connect_to_zuora() -> str:
-    """
-    Connect to Zuora and verify OAuth authentication.
-    Call this first before any other Zuora operations.
-
-    Returns:
-        Connection status with environment info.
-    """
+    """Connect to Zuora and verify OAuth. Returns connection status and environment."""
     client = get_zuora_client()
     result = client.check_connection()
 
@@ -508,15 +429,7 @@ def connect_to_zuora() -> str:
 
 @tool
 def list_zuora_products(page_size: int = 20) -> str:
-    """
-    List all products from the Zuora Product Catalog.
-
-    Args:
-        page_size: Number of products to retrieve (default: 20)
-
-    Returns:
-        List of products with ID, Name, SKU, and effective dates.
-    """
+    """List products from Zuora Catalog."""
     client = get_zuora_client()
     result = client.list_all_products(page_size=page_size)
 
@@ -540,19 +453,9 @@ def list_zuora_products(page_size: int = 20) -> str:
 
 @tool
 def get_zuora_product(
-    identifier: str,
-    identifier_type: Literal["id", "name", "sku"] = "name"
+    identifier: str, identifier_type: Literal["id", "name", "sku"] = "name"
 ) -> str:
-    """
-    Get details of a specific product from Zuora.
-
-    Args:
-        identifier: The product ID, name, or SKU to search for
-        identifier_type: Type of identifier - "id", "name", or "sku" (default: "name")
-
-    Returns:
-        Product details including ID, name, SKU, description, dates, and rate plans.
-    """
+    """Get product details by ID, name, or SKU."""
     client = get_zuora_client()
 
     if identifier_type == "id":
@@ -563,7 +466,11 @@ def get_zuora_product(
         if result.get("success"):
             products = result.get("data", {}).get("products", [])
             search_field = "name" if identifier_type == "name" else "sku"
-            matching = [p for p in products if p.get(search_field, "").lower() == identifier.lower()]
+            matching = [
+                p
+                for p in products
+                if p.get(search_field, "").lower() == identifier.lower()
+            ]
             if matching:
                 # Get full product details
                 result = client.get_product(matching[0]["id"])
@@ -586,7 +493,9 @@ def get_zuora_product(
     if rate_plans:
         output += f"\n**Rate Plans ({len(rate_plans)}):**\n"
         for rp in rate_plans:
-            output += f"\n  📋 **{rp.get('name', 'N/A')}** (ID: {rp.get('id', 'N/A')})\n"
+            output += (
+                f"\n  📋 **{rp.get('name', 'N/A')}** (ID: {rp.get('id', 'N/A')})\n"
+            )
             output += f"     Description: {rp.get('description', 'N/A')}\n"
 
             charges = rp.get("productRatePlanCharges", [])
@@ -605,17 +514,10 @@ def get_zuora_product(
 
 
 @tool
-def get_zuora_rate_plan_details(product_id: str, rate_plan_name: Optional[str] = None) -> str:
-    """
-    Get detailed rate plan information for a product.
-
-    Args:
-        product_id: The product ID
-        rate_plan_name: Optional - specific rate plan name to filter
-
-    Returns:
-        Detailed rate plan information including charges.
-    """
+def get_zuora_rate_plan_details(
+    product_id: str, rate_plan_name: Optional[str] = None
+) -> str:
+    """Get rate plan details and charges for a product."""
     client = get_zuora_client()
     result = client.get_product(product_id)
 
@@ -626,7 +528,11 @@ def get_zuora_rate_plan_details(product_id: str, rate_plan_name: Optional[str] =
     rate_plans = product.get("productRatePlans", [])
 
     if rate_plan_name:
-        rate_plans = [rp for rp in rate_plans if rp.get("name", "").lower() == rate_plan_name.lower()]
+        rate_plans = [
+            rp
+            for rp in rate_plans
+            if rp.get("name", "").lower() == rate_plan_name.lower()
+        ]
         if not rate_plans:
             return f"❌ No rate plan found with name '{rate_plan_name}'"
 
@@ -643,7 +549,9 @@ def get_zuora_rate_plan_details(product_id: str, rate_plan_name: Optional[str] =
         if charges:
             output += f"\n   **Charges ({len(charges)}):**\n"
             for ch in charges:
-                output += f"\n   💰 {ch.get('name', 'N/A')} (ID: {ch.get('id', 'N/A')})\n"
+                output += (
+                    f"\n   💰 {ch.get('name', 'N/A')} (ID: {ch.get('id', 'N/A')})\n"
+                )
                 output += f"      Type: {ch.get('type', 'N/A')}\n"
                 output += f"      Model: {ch.get('model', 'N/A')}\n"
                 output += f"      Billing Period: {ch.get('billingPeriod', 'N/A')}\n"
@@ -665,31 +573,22 @@ def get_zuora_rate_plan_details(product_id: str, rate_plan_name: Optional[str] =
 def update_zuora_product(
     tool_context: ToolContext,
     product_id: str,
-    attribute: Literal["name", "sku", "description", "effectiveStartDate", "effectiveEndDate"],
-    new_value: str
+    attribute: Literal[
+        "name", "sku", "description", "effectiveStartDate", "effectiveEndDate"
+    ],
+    new_value: str,
 ) -> str:
-    """
-    Generate a Zuora API payload to update a product attribute.
-    The payload will be returned for you to execute via the Zuora API.
-
-    Args:
-        product_id: The product ID to update
-        attribute: The attribute to update (name, sku, description, effectiveStartDate, effectiveEndDate)
-        new_value: The new value for the attribute
-
-    Returns:
-        The generated API payload for the user to execute.
-    """
+    """Generate payload to update product attribute."""
     payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
 
     update_payload = {
         "payload": {
             "method": "PUT",
             "endpoint": f"/v1/catalog/products/{product_id}",
-            "body": {attribute: new_value}
+            "body": {attribute: new_value},
         },
         "zuora_api_type": "product_update",
-        "payload_id": str(uuid.uuid4())[:8]
+        "payload_id": str(uuid.uuid4())[:8],
     }
 
     payloads.append(update_payload)
@@ -710,30 +609,19 @@ def update_zuora_rate_plan(
     tool_context: ToolContext,
     rate_plan_id: str,
     attribute: Literal["name", "description", "effectiveStartDate", "effectiveEndDate"],
-    new_value: str
+    new_value: str,
 ) -> str:
-    """
-    Generate a Zuora API payload to update a rate plan attribute.
-    The payload will be returned for you to execute via the Zuora API.
-
-    Args:
-        rate_plan_id: The rate plan ID to update
-        attribute: The attribute to update (name, description, effectiveStartDate, effectiveEndDate)
-        new_value: The new value for the attribute
-
-    Returns:
-        The generated API payload for the user to execute.
-    """
+    """Generate payload to update rate plan attribute."""
     payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
 
     update_payload = {
         "payload": {
             "method": "PUT",
             "endpoint": f"/v1/catalog/product-rate-plans/{rate_plan_id}",
-            "body": {attribute: new_value}
+            "body": {attribute: new_value},
         },
         "zuora_api_type": "rate_plan_update",
-        "payload_id": str(uuid.uuid4())[:8]
+        "payload_id": str(uuid.uuid4())[:8],
     }
 
     payloads.append(update_payload)
@@ -752,23 +640,9 @@ This payload has been added to the response. Execute it via the Zuora API to app
 
 @tool(context=True)
 def update_zuora_charge(
-    tool_context: ToolContext,
-    charge_id: str,
-    attribute: str,
-    new_value: Any
+    tool_context: ToolContext, charge_id: str, attribute: str, new_value: Any
 ) -> str:
-    """
-    Generate a Zuora API payload to update a charge attribute.
-    The payload will be returned for you to execute via the Zuora API.
-
-    Args:
-        charge_id: The charge ID to update
-        attribute: The attribute to update (name, description, price, billingPeriod, triggerEvent, etc.)
-        new_value: The new value for the attribute
-
-    Returns:
-        The generated API payload for the user to execute.
-    """
+    """Generate payload to update charge attribute."""
     # Check for restricted attributes
     restricted_attrs = ["model", "type", "chargeModel", "chargeType"]
     if attribute.lower() in [a.lower() for a in restricted_attrs]:
@@ -784,10 +658,10 @@ Charge Model and Charge Type cannot be changed if this charge is used in any exi
         "payload": {
             "method": "PUT",
             "endpoint": f"/v1/catalog/product-rate-plan-charges/{charge_id}",
-            "body": {attribute: new_value}
+            "body": {attribute: new_value},
         },
         "zuora_api_type": "charge_update",
-        "payload_id": str(uuid.uuid4())[:8]
+        "payload_id": str(uuid.uuid4())[:8],
     }
 
     payloads.append(update_payload)
@@ -806,6 +680,7 @@ This payload has been added to the response. Execute it via the Zuora API to app
 
 # ============ Product/Rate Plan/Charge Creation Tools (Payload Generation) ============
 
+
 @tool(context=True)
 def create_product(
     tool_context: ToolContext,
@@ -813,28 +688,14 @@ def create_product(
     sku: str,
     effective_start_date: str,
     description: Optional[str] = None,
-    effective_end_date: Optional[str] = None
+    effective_end_date: Optional[str] = None,
 ) -> str:
-    """
-    Generate a payload to create a new product in Zuora catalog.
-
-    The payload will be added to zuora_api_payloads for manual execution.
-
-    Args:
-        name: Product name
-        sku: Unique product SKU identifier
-        effective_start_date: Start date in YYYY-MM-DD format
-        description: Optional product description
-        effective_end_date: Optional end date in YYYY-MM-DD format
-
-    Returns:
-        Confirmation with payload details for manual execution
-    """
+    """Generate payload to create new product with validation."""
     import re
     from datetime import datetime
 
     # Validate date format
-    date_pattern = r'^\d{4}-\d{2}-\d{2}$'
+    date_pattern = r"^\d{4}-\d{2}-\d{2}$"
     if not re.match(date_pattern, effective_start_date):
         return f"❌ Invalid date format for effective_start_date. Use YYYY-MM-DD format (e.g., 2024-01-01)"
 
@@ -852,7 +713,7 @@ def create_product(
             return f"❌ Invalid date: {str(e)}"
 
     # Validate SKU format (alphanumeric, hyphens, underscores)
-    if not re.match(r'^[a-zA-Z0-9_-]+$', sku):
+    if not re.match(r"^[a-zA-Z0-9_-]+$", sku):
         return f"❌ Invalid SKU format. Use only alphanumeric characters, hyphens, and underscores"
 
     payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
@@ -861,7 +722,7 @@ def create_product(
     payload_data = {
         "name": name,
         "sku": sku,
-        "effectiveStartDate": effective_start_date
+        "effectiveStartDate": effective_start_date,
     }
 
     if description:
@@ -874,7 +735,7 @@ def create_product(
         "zuora_api_type": "product_create",
         "payload_id": str(uuid.uuid4())[:8],
         "_endpoint": "POST /v1/catalog/products",
-        "_method": "POST"
+        "_method": "POST",
     }
 
     payloads.append(product_payload)
@@ -896,7 +757,7 @@ def create_product(
   <li><strong>Save the returned product ID</strong> - you'll need it to create rate plans</li>
 </ol>
 
-<p><strong>Payload ID:</strong> <code>{product_payload['payload_id']}</code></p>
+<p><strong>Payload ID:</strong> <code>{product_payload["payload_id"]}</code></p>
 <p><em>Note: This payload has been added to zuora_api_payloads in the response.</em></p>"""
 
 
@@ -907,23 +768,9 @@ def create_rate_plan(
     name: str,
     description: Optional[str] = None,
     effective_start_date: Optional[str] = None,
-    effective_end_date: Optional[str] = None
+    effective_end_date: Optional[str] = None,
 ) -> str:
-    """
-    Generate a payload to create a rate plan for an existing product.
-
-    The payload will be added to zuora_api_payloads for manual execution.
-
-    Args:
-        product_id: Parent product ID (from Zuora, e.g., "8a12345...")
-        name: Rate plan name
-        description: Optional rate plan description
-        effective_start_date: Optional start date (defaults to product start date)
-        effective_end_date: Optional end date
-
-    Returns:
-        Confirmation with payload details for manual execution
-    """
+    """Generate payload to create rate plan for a product."""
     import re
     from datetime import datetime
 
@@ -932,7 +779,7 @@ def create_rate_plan(
         return f"❌ Invalid product_id. Provide the product ID from Zuora (e.g., '8a1234567890abcd')"
 
     # Validate date formats if provided
-    date_pattern = r'^\d{4}-\d{2}-\d{2}$'
+    date_pattern = r"^\d{4}-\d{2}-\d{2}$"
     if effective_start_date and not re.match(date_pattern, effective_start_date):
         return f"❌ Invalid date format for effective_start_date. Use YYYY-MM-DD format"
 
@@ -952,10 +799,7 @@ def create_rate_plan(
     payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
 
     # Build rate plan payload
-    payload_data = {
-        "productId": product_id,
-        "name": name
-    }
+    payload_data = {"productId": product_id, "name": name}
 
     if description:
         payload_data["description"] = description
@@ -969,7 +813,7 @@ def create_rate_plan(
         "zuora_api_type": "rate_plan_create",
         "payload_id": str(uuid.uuid4())[:8],
         "_endpoint": "POST /v1/catalog/product-rate-plans",
-        "_method": "POST"
+        "_method": "POST",
     }
 
     payloads.append(rate_plan_payload)
@@ -991,7 +835,7 @@ def create_rate_plan(
   <li><strong>Save the returned rate plan ID</strong> - you'll need it to create charges</li>
 </ol>
 
-<p><strong>Payload ID:</strong> <code>{rate_plan_payload['payload_id']}</code></p>
+<p><strong>Payload ID:</strong> <code>{rate_plan_payload["payload_id"]}</code></p>
 <p><em>Note: This payload has been added to zuora_api_payloads in the response.</em></p>"""
 
 
@@ -1003,30 +847,14 @@ def create_charge(
     charge_type: Literal["Recurring", "OneTime", "Usage"],
     charge_model: Literal["FlatFee", "PerUnit", "Tiered", "Volume"],
     price: Optional[float] = None,
-    billing_period: Optional[Literal["Month", "Quarter", "Annual", "Week", "Day"]] = None,
+    billing_period: Optional[
+        Literal["Month", "Quarter", "Annual", "Week", "Day"]
+    ] = None,
     billing_timing: Literal["InAdvance", "InArrears"] = "InAdvance",
     uom: Optional[str] = None,
-    description: Optional[str] = None
+    description: Optional[str] = None,
 ) -> str:
-    """
-    Generate a payload to create a charge for an existing rate plan.
-
-    The payload will be added to zuora_api_payloads for manual execution.
-
-    Args:
-        rate_plan_id: Parent rate plan ID (from Zuora, e.g., "8a12345...")
-        name: Charge name
-        charge_type: Recurring, OneTime, or Usage
-        charge_model: Pricing model - FlatFee, PerUnit, Tiered, or Volume
-        price: Price amount (required for FlatFee and PerUnit models)
-        billing_period: Required for Recurring charges (Month, Quarter, Annual, Week, Day)
-        billing_timing: When to bill - InAdvance or InArrears
-        uom: Unit of measure (required for Usage charges, e.g., "API_CALL")
-        description: Optional charge description
-
-    Returns:
-        Confirmation with payload details for manual execution
-    """
+    """Generate charge creation payload with validation."""
     # Validate rate_plan_id
     if not rate_plan_id or len(rate_plan_id) < 10:
         return f"❌ Invalid rate_plan_id. Provide the rate plan ID from Zuora"
@@ -1036,11 +864,15 @@ def create_charge(
 
     # Recurring charges require billing_period
     if charge_type == "Recurring" and not billing_period:
-        validation_errors.append("Recurring charges require billing_period (Month, Quarter, Annual, Week, or Day)")
+        validation_errors.append(
+            "Recurring charges require billing_period (Month, Quarter, Annual, Week, or Day)"
+        )
 
     # Usage charges require uom
     if charge_type == "Usage" and not uom:
-        validation_errors.append("Usage charges require uom (unit of measure, e.g., 'API_CALL', 'GB', 'TRANSACTION')")
+        validation_errors.append(
+            "Usage charges require uom (unit of measure, e.g., 'API_CALL', 'GB', 'TRANSACTION')"
+        )
 
     # FlatFee and PerUnit charges require price
     if charge_model in ["FlatFee", "PerUnit"] and price is None:
@@ -1048,7 +880,9 @@ def create_charge(
 
     # Tiered and Volume charges should not have a simple price (they use tier data)
     if charge_model in ["Tiered", "Volume"] and price is not None:
-        validation_errors.append(f"{charge_model} charges use tier pricing. Do not specify a simple price. Use the generic create_payload tool for tiered pricing.")
+        validation_errors.append(
+            f"{charge_model} charges use tier pricing. Do not specify a simple price. Use the generic create_payload tool for tiered pricing."
+        )
 
     if validation_errors:
         error_msg = "<br>".join(f"• {err}" for err in validation_errors)
@@ -1072,7 +906,7 @@ def create_charge(
         "name": name,
         "chargeType": charge_type,
         "chargeModel": charge_model,
-        "billingTiming": billing_timing
+        "billingTiming": billing_timing,
     }
 
     if description:
@@ -1089,7 +923,7 @@ def create_charge(
         "zuora_api_type": "charge_create",
         "payload_id": str(uuid.uuid4())[:8],
         "_endpoint": "POST /v1/catalog/product-rate-plan-charges",
-        "_method": "POST"
+        "_method": "POST",
     }
 
     payloads.append(charge_payload)
@@ -1112,7 +946,7 @@ def create_charge(
   <li>The charge will be active on new subscriptions using this rate plan</li>
 </ol>
 
-<p><strong>Payload ID:</strong> <code>{charge_payload['payload_id']}</code></p>
+<p><strong>Payload ID:</strong> <code>{charge_payload["payload_id"]}</code></p>
 <p><em>Note: This payload has been added to zuora_api_payloads in the response.</em></p>"""
 
 
@@ -1162,16 +996,9 @@ def generate_prepaid_config(
         "billingTiming": "In Advance",
         "prepaidUOM": prepaid_uom,
         "prepaidQuantity": prepaid_quantity,
-        "pricing": [{
-            "currency": "USD",
-            "price": prepaid_amount
-        }],
+        "pricing": [{"currency": "USD", "price": prepaid_amount}],
         "validityPeriodType": "SUBSCRIPTION_TERM",
-        "rollover": {
-            "enabled": True,
-            "percentage": 100,
-            "cap": None
-        }
+        "rollover": {"enabled": True, "percentage": 100, "cap": None},
     }
 
     # Drawdown charge configuration
@@ -1181,10 +1008,7 @@ def generate_prepaid_config(
         "model": "Per Unit Pricing",
         "uom": prepaid_uom,
         "usageType": "DRAWDOWN",
-        "pricing": [{
-            "currency": "USD",
-            "price": 0
-        }]
+        "pricing": [{"currency": "USD", "price": 0}],
     }
 
     # Field lookup expression
@@ -1351,13 +1175,15 @@ When prepaid balance is depleted, you have options:
 
     # Store advisory payload
     payloads = tool_context.agent.state.get(ADVISORY_PAYLOADS_STATE_KEY) or []
-    payloads.append({
-        "type": "prepaid_config",
-        "name": f"{product_name} - {rate_plan_name}",
-        "prepaid_charge": prepaid_charge_config,
-        "drawdown_charge": drawdown_charge_config,
-        "endpoint": "POST /v1/object/product-rate-plan-charge"
-    })
+    payloads.append(
+        {
+            "type": "prepaid_config",
+            "name": f"{product_name} - {rate_plan_name}",
+            "prepaid_charge": prepaid_charge_config,
+            "drawdown_charge": drawdown_charge_config,
+            "endpoint": "POST /v1/object/product-rate-plan-charge",
+        }
+    )
     tool_context.agent.state.set(ADVISORY_PAYLOADS_STATE_KEY, payloads)
 
     return guide
@@ -1398,17 +1224,14 @@ def generate_workflow_config(
     if trigger_type == "Scheduled" and schedule:
         workflow_config["schedule"] = {
             "cronExpression": schedule,
-            "startDate": "{{REPLACE_WITH_START_DATE}}"
+            "startDate": "{{REPLACE_WITH_START_DATE}}",
         }
     elif trigger_type == "Event" and event_type:
-        workflow_config["event"] = {
-            "eventType": event_type,
-            "filters": []
-        }
+        workflow_config["event"] = {"eventType": event_type, "filters": []}
     elif trigger_type == "Callout":
         workflow_config["callout"] = {
             "endpoint": "{{WORKFLOW_WILL_GENERATE_ENDPOINT}}",
-            "authentication": "OAuth"
+            "authentication": "OAuth",
         }
 
     # Build example workflow tasks based on common use cases
@@ -1419,26 +1242,26 @@ def generate_workflow_config(
                 "name": "Get Account Info",
                 "type": "API",
                 "description": "Retrieve account and subscription details",
-                "api_call": "GET /v1/accounts/{{accountId}}"
+                "api_call": "GET /v1/accounts/{{accountId}}",
             },
             {
                 "name": "Check Prepaid Balance",
                 "type": "API",
                 "description": "Get current prepaid balance",
-                "api_call": "GET /v1/prepaid-balances?accountId={{accountId}}"
+                "api_call": "GET /v1/prepaid-balances?accountId={{accountId}}",
             },
             {
                 "name": "Compare Balance vs Threshold",
                 "type": "Condition",
                 "description": "Check if balance < threshold",
-                "condition": "{{prepaidBalance}} < {{account.MinimumThreshold__c}}"
+                "condition": "{{prepaidBalance}} < {{account.MinimumThreshold__c}}",
             },
             {
                 "name": "Create Top-Up Order",
                 "type": "API",
                 "description": "Create order to add prepaid balance",
-                "api_call": "POST /v1/orders"
-            }
+                "api_call": "POST /v1/orders",
+            },
         ]
     elif "transition" in description.lower():
         example_tasks = [
@@ -1446,20 +1269,20 @@ def generate_workflow_config(
                 "name": "Get Subscription",
                 "type": "API",
                 "description": "Retrieve subscription details",
-                "api_call": "GET /v1/subscriptions/{{subscriptionId}}"
+                "api_call": "GET /v1/subscriptions/{{subscriptionId}}",
             },
             {
                 "name": "Check Product Type",
                 "type": "Condition",
                 "description": "Verify current product is Pay-as-you-go",
-                "condition": "{{subscription.ratePlanName}} == 'Pay-as-you-go'"
+                "condition": "{{subscription.ratePlanName}} == 'Pay-as-you-go'",
             },
             {
                 "name": "Create Transition Order",
                 "type": "API",
                 "description": "Remove old plan, add new plan",
-                "api_call": "POST /v1/orders"
-            }
+                "api_call": "POST /v1/orders",
+            },
         ]
 
     guide = f"""
@@ -1492,11 +1315,11 @@ def generate_workflow_config(
     if example_tasks:
         for i, task in enumerate(example_tasks, 1):
             guide += f"""
-**Task {i}: {task['name']}**
-- Type: {task['type']}
-- Description: {task['description']}
-{"- API Call: `" + task.get('api_call', '') + "`" if task.get('api_call') else ""}
-{"- Condition: `" + task.get('condition', '') + "`" if task.get('condition') else ""}
+**Task {i}: {task["name"]}**
+- Type: {task["type"]}
+- Description: {task["description"]}
+{"- API Call: `" + task.get("api_call", "") + "`" if task.get("api_call") else ""}
+{"- Condition: `" + task.get("condition", "") + "`" if task.get("condition") else ""}
 """
 
     guide += f"""
@@ -1560,12 +1383,14 @@ def generate_workflow_config(
 
     # Store advisory payload
     payloads = tool_context.agent.state.get(ADVISORY_PAYLOADS_STATE_KEY) or []
-    payloads.append({
-        "type": "workflow",
-        "name": workflow_name,
-        "config": workflow_config,
-        "endpoint": "POST /workflows"
-    })
+    payloads.append(
+        {
+            "type": "workflow",
+            "name": workflow_name,
+            "config": workflow_config,
+            "endpoint": "POST /workflows",
+        }
+    )
     tool_context.agent.state.set(ADVISORY_PAYLOADS_STATE_KEY, payloads)
 
     return guide
@@ -1599,13 +1424,13 @@ def generate_notification_rule(
         "description": description,
         "eventType": event_type,
         "active": True,
-        "channel": {
-            "type": channel_type
-        }
+        "channel": {"type": channel_type},
     }
 
     if channel_type in ["Callout", "Webhook"]:
-        notification_config["channel"]["endpoint"] = endpoint_url or "{{WORKFLOW_CALLOUT_URL}}"
+        notification_config["channel"]["endpoint"] = (
+            endpoint_url or "{{WORKFLOW_CALLOUT_URL}}"
+        )
         notification_config["channel"]["retryCount"] = 3
         notification_config["channel"]["retryInterval"] = 60
 
@@ -1762,71 +1587,85 @@ def generate_order_payload(
     order_payload = {
         "orderDate": effective_date or "{{REPLACE_WITH_DATE}}",
         "existingAccountNumber": "{{REPLACE_WITH_ACCOUNT_NUMBER}}",
-        "subscriptions": []
+        "subscriptions": [],
     }
 
     subscription_action = {
-        "subscriptionNumber": subscription_number or "{{REPLACE_WITH_SUBSCRIPTION_NUMBER}}",
-        "orderActions": []
+        "subscriptionNumber": subscription_number
+        or "{{REPLACE_WITH_SUBSCRIPTION_NUMBER}}",
+        "orderActions": [],
     }
 
     # Build charge override if using fieldLookup
     actual_charge_overrides = charge_overrides
     if use_field_lookup_for_price and field_lookup_expression:
         actual_charge_overrides = actual_charge_overrides or {}
-        actual_charge_overrides["pricing"] = [{
-            "currency": "USD",
-            "price": f"fieldLookup('{field_lookup_expression}')"
-        }]
+        actual_charge_overrides["pricing"] = [
+            {"currency": "USD", "price": f"fieldLookup('{field_lookup_expression}')"}
+        ]
 
     if action_type == "AddProduct" and add_rate_plan_id:
         add_action = {
             "type": "AddProduct",
             "triggerDates": [
-                {"name": "ContractEffective", "triggerDate": effective_date or "{{DATE}}"},
-                {"name": "ServiceActivation", "triggerDate": effective_date or "{{DATE}}"}
+                {
+                    "name": "ContractEffective",
+                    "triggerDate": effective_date or "{{DATE}}",
+                },
+                {
+                    "name": "ServiceActivation",
+                    "triggerDate": effective_date or "{{DATE}}",
+                },
             ],
-            "addProduct": {
-                "productRatePlanId": add_rate_plan_id
-            }
+            "addProduct": {"productRatePlanId": add_rate_plan_id},
         }
         if actual_charge_overrides:
             add_action["addProduct"]["chargeOverrides"] = [actual_charge_overrides]
         subscription_action["orderActions"].append(add_action)
 
     elif action_type == "RemoveProduct" and remove_rate_plan_id:
-        subscription_action["orderActions"].append({
-            "type": "RemoveProduct",
-            "triggerDates": [
-                {"name": "ContractEffective", "triggerDate": effective_date or "{{DATE}}"}
-            ],
-            "removeProduct": {
-                "ratePlanId": remove_rate_plan_id
+        subscription_action["orderActions"].append(
+            {
+                "type": "RemoveProduct",
+                "triggerDates": [
+                    {
+                        "name": "ContractEffective",
+                        "triggerDate": effective_date or "{{DATE}}",
+                    }
+                ],
+                "removeProduct": {"ratePlanId": remove_rate_plan_id},
             }
-        })
+        )
 
     elif action_type == "Transition":
         # Remove old, add new in single order
         if remove_rate_plan_id:
-            subscription_action["orderActions"].append({
-                "type": "RemoveProduct",
-                "triggerDates": [
-                    {"name": "ContractEffective", "triggerDate": effective_date or "{{DATE}}"}
-                ],
-                "removeProduct": {
-                    "ratePlanId": remove_rate_plan_id
+            subscription_action["orderActions"].append(
+                {
+                    "type": "RemoveProduct",
+                    "triggerDates": [
+                        {
+                            "name": "ContractEffective",
+                            "triggerDate": effective_date or "{{DATE}}",
+                        }
+                    ],
+                    "removeProduct": {"ratePlanId": remove_rate_plan_id},
                 }
-            })
+            )
         if add_rate_plan_id:
             add_action = {
                 "type": "AddProduct",
                 "triggerDates": [
-                    {"name": "ContractEffective", "triggerDate": effective_date or "{{DATE}}"},
-                    {"name": "ServiceActivation", "triggerDate": effective_date or "{{DATE}}"}
+                    {
+                        "name": "ContractEffective",
+                        "triggerDate": effective_date or "{{DATE}}",
+                    },
+                    {
+                        "name": "ServiceActivation",
+                        "triggerDate": effective_date or "{{DATE}}",
+                    },
                 ],
-                "addProduct": {
-                    "productRatePlanId": add_rate_plan_id
-                }
+                "addProduct": {"productRatePlanId": add_rate_plan_id},
             }
             if actual_charge_overrides:
                 add_action["addProduct"]["chargeOverrides"] = [actual_charge_overrides]
@@ -1837,12 +1676,18 @@ def generate_order_payload(
         add_action = {
             "type": "AddProduct",
             "triggerDates": [
-                {"name": "ContractEffective", "triggerDate": effective_date or "{{DATE}}"},
-                {"name": "ServiceActivation", "triggerDate": effective_date or "{{DATE}}"}
+                {
+                    "name": "ContractEffective",
+                    "triggerDate": effective_date or "{{DATE}}",
+                },
+                {
+                    "name": "ServiceActivation",
+                    "triggerDate": effective_date or "{{DATE}}",
+                },
             ],
             "addProduct": {
                 "productRatePlanId": add_rate_plan_id or "{{PREPAID_RATE_PLAN_ID}}"
-            }
+            },
         }
         if actual_charge_overrides:
             add_action["addProduct"]["chargeOverrides"] = [actual_charge_overrides]
@@ -1855,7 +1700,7 @@ def generate_order_payload(
         "AddProduct": "add a new rate plan",
         "RemoveProduct": "remove an existing rate plan",
         "Transition": "transition between rate plans (remove old, add new)",
-        "TopUp": "add prepaid balance to subscription"
+        "TopUp": "add prepaid balance to subscription",
     }.get(action_type, action_type)
 
     guide = f"""
@@ -1902,7 +1747,7 @@ This order uses `fieldLookup('{field_lookup_expression}')` for dynamic pricing.
 **Prerequisite:** Ensure the custom field exists on the Account object:
 ```json
 {{
-    "name": "{field_lookup_expression.split('.')[-1]}",
+    "name": "{field_lookup_expression.split(".")[-1]}",
     "label": "Dynamic Amount Field",
     "type": "Number"
 }}
@@ -2064,7 +1909,7 @@ Navigate to **Settings > Custom Fields > {object_type}**
 ```json
 {{
     "name": "{field_name}",
-    "label": "{field_name.replace('__c', '').replace('_', ' ')}",
+    "label": "{field_name.replace("__c", "").replace("_", " ")}",
     "type": "Number",
     "description": "Custom field for {use_case}"
 }}
@@ -2317,10 +2162,10 @@ def generate_multi_attribute_pricing(
         guide += f"""
 ```json
 {{
-    "name": "{attr['name']}__c",
-    "label": "Customer {attr['name']}",
+    "name": "{attr["name"]}__c",
+    "label": "Customer {attr["name"]}",
     "type": "Picklist",
-    "picklistValues": {json.dumps(attr.get('values', []))}
+    "picklistValues": {json.dumps(attr.get("values", []))}
 }}
 ```
 """
@@ -2380,7 +2225,7 @@ Create separate rate plans for each combination:
 
 ### Recommended Approach
 
-Based on {len(attributes)} attribute(s) with {sum(len(a.get('values', [])) for a in attributes)} total values:
+Based on {len(attributes)} attribute(s) with {sum(len(a.get("values", [])) for a in attributes)} total values:
 
 """
     total_combinations = 1
@@ -2519,7 +2364,7 @@ Adding custom field `{api_name}` to the `{object_type}` object.
 When creating or updating a {object_type}:
 ```json
 {{
-    "{api_name}": {'"value"' if field_type == "Text" else '500.00' if field_type == "Number" else '"2024-01-01"' if field_type == "Date" else 'true' if field_type == "Checkbox" else '"Option1"'}
+    "{api_name}": {'"value"' if field_type == "Text" else "500.00" if field_type == "Number" else '"2024-01-01"' if field_type == "Date" else "true" if field_type == "Checkbox" else '"Option1"'}
 }}
 ```
 
@@ -2631,7 +2476,7 @@ Generate configurations first, then run validation to check for issues."""
             "type": payload.get("type", "unknown"),
             "status": "Valid",
             "issues": [],
-            "recommendations": []
+            "recommendations": [],
         }
 
         config = payload.get("config", {})
@@ -2642,14 +2487,20 @@ Generate configurations first, then run validation to check for issues."""
             if not config.get("name"):
                 result["issues"].append("Missing workflow name")
                 result["status"] = "Has Issues"
-            if config.get("type") == "Scheduled" and not config.get("schedule", {}).get("cronExpression"):
+            if config.get("type") == "Scheduled" and not config.get("schedule", {}).get(
+                "cronExpression"
+            ):
                 result["issues"].append("Scheduled workflow missing cron expression")
                 result["status"] = "Has Issues"
-            if config.get("type") == "Event" and not config.get("event", {}).get("eventType"):
+            if config.get("type") == "Event" and not config.get("event", {}).get(
+                "eventType"
+            ):
                 result["issues"].append("Event workflow missing event type")
                 result["status"] = "Has Issues"
             if result["status"] == "Valid":
-                result["recommendations"].append("Test workflow in sandbox before production")
+                result["recommendations"].append(
+                    "Test workflow in sandbox before production"
+                )
 
         elif p_type == "notification":
             if not config.get("eventType"):
@@ -2658,7 +2509,9 @@ Generate configurations first, then run validation to check for issues."""
             if config.get("channel", {}).get("type") in ["Callout", "Webhook"]:
                 endpoint = config.get("channel", {}).get("endpoint", "")
                 if "{{" in endpoint:
-                    result["recommendations"].append("Replace placeholder endpoint URL before creating")
+                    result["recommendations"].append(
+                        "Replace placeholder endpoint URL before creating"
+                    )
 
         elif p_type == "prepaid_config":
             prepaid = payload.get("prepaid_charge", {})
@@ -2670,7 +2523,9 @@ Generate configurations first, then run validation to check for issues."""
                 result["status"] = "Has Issues"
             drawdown = payload.get("drawdown_charge", {})
             if drawdown.get("usageType") != "DRAWDOWN":
-                result["recommendations"].append("Ensure drawdown charge has usageType: DRAWDOWN")
+                result["recommendations"].append(
+                    "Ensure drawdown charge has usageType: DRAWDOWN"
+                )
 
         elif p_type == "order":
             if not config.get("subscriptions"):
@@ -2684,8 +2539,8 @@ Generate configurations first, then run validation to check for issues."""
 
 **Configurations Validated:** {len(validation_results)}
 **Status Summary:**
-- Valid: {sum(1 for r in validation_results if r['status'] == 'Valid')}
-- Has Issues: {sum(1 for r in validation_results if r['status'] == 'Has Issues')}
+- Valid: {sum(1 for r in validation_results if r["status"] == "Valid")}
+- Has Issues: {sum(1 for r in validation_results if r["status"] == "Has Issues")}
 
 ---
 
@@ -2725,7 +2580,15 @@ Generate configurations first, then run validation to check for issues."""
 
 @tool
 def get_zuora_documentation(
-    topic: Literal["prepaid", "workflow", "notification", "orders", "fieldLookup", "multiAttributePricing", "customFields"],
+    topic: Literal[
+        "prepaid",
+        "workflow",
+        "notification",
+        "orders",
+        "fieldLookup",
+        "multiAttributePricing",
+        "customFields",
+    ],
 ) -> str:
     """
     Get Zuora documentation links and quick reference for a topic.
@@ -2746,14 +2609,14 @@ def get_zuora_documentation(
                 "Drawdown: Usage that depletes the prepaid balance",
                 "Overage: Handling when balance is depleted (block, allow, or auto top-up)",
                 "Rollover: Carrying unused credits forward to next period",
-                "Top-Up: Adding more credits to the prepaid balance"
+                "Top-Up: Adding more credits to the prepaid balance",
             ],
             "api_endpoints": [
                 "POST /v1/object/product-rate-plan-charge (create prepaid charge)",
                 "GET /v1/prepaid-balances?accountId={id} (check balance)",
                 "POST /v1/usage (record drawdown usage)",
-                "POST /v1/orders (add top-up)"
-            ]
+                "POST /v1/orders (add top-up)",
+            ],
         },
         "workflow": {
             "title": "Zuora Workflows",
@@ -2763,14 +2626,14 @@ def get_zuora_documentation(
                 "Triggers: Scheduled (cron), Event-based, or Callout (webhook)",
                 "Tasks: API calls, conditions, delays, iterations, custom code",
                 "Error Handling: Retry logic, failure notifications, fallback paths",
-                "Testing: Sandbox execution before production activation"
+                "Testing: Sandbox execution before production activation",
             ],
             "api_endpoints": [
                 "POST /workflows (create workflow)",
                 "GET /workflows (list workflows)",
                 "POST /workflows/{id}/run (manual trigger)",
-                "GET /workflows/{id}/runs (execution history)"
-            ]
+                "GET /workflows/{id}/runs (execution history)",
+            ],
         },
         "notification": {
             "title": "Notifications",
@@ -2780,13 +2643,13 @@ def get_zuora_documentation(
                 "Event Types: System events that trigger notifications",
                 "Email Templates: Customizable notification content with merge fields",
                 "Callouts: Webhook-style HTTP notifications to external systems",
-                "Filters: Conditional notification triggering based on criteria"
+                "Filters: Conditional notification triggering based on criteria",
             ],
             "api_endpoints": [
                 "POST /notifications/notification-definitions (create rule)",
                 "GET /notifications/notification-definitions (list rules)",
-                "GET /notifications/notification-history (view history)"
-            ]
+                "GET /notifications/notification-history (view history)",
+            ],
         },
         "orders": {
             "title": "Orders API",
@@ -2796,14 +2659,14 @@ def get_zuora_documentation(
                 "Order Actions: AddProduct, RemoveProduct, UpdateProduct, Suspend, Resume",
                 "Trigger Dates: ContractEffective, ServiceActivation, CustomerAcceptance",
                 "Charge Overrides: Custom pricing, quantity, custom fields on add",
-                "Preview: Test orders before execution to see impact"
+                "Preview: Test orders before execution to see impact",
             ],
             "api_endpoints": [
                 "POST /v1/orders (create order)",
                 "POST /v1/orders/preview (preview order impact)",
                 "GET /v1/orders/{order-number} (get order details)",
-                "GET /v1/orders (list orders)"
-            ]
+                "GET /v1/orders (list orders)",
+            ],
         },
         "fieldLookup": {
             "title": "fieldLookup() Function",
@@ -2813,13 +2676,13 @@ def get_zuora_documentation(
                 "Syntax: fieldLookup('object', 'fieldName') or fieldLookup('Object.FieldName')",
                 "Supported Objects: Account, Subscription, RatePlan, Charge",
                 "Use Cases: Customer-specific pricing, regional pricing, contracted rates",
-                "Custom Fields: Required on target object for dynamic values"
+                "Custom Fields: Required on target object for dynamic values",
             ],
             "api_endpoints": [
                 "POST /v1/settings/custom-fields (create custom field)",
                 "PUT /v1/accounts/{id} (update account with field value)",
-                "Pricing configuration in Product Rate Plan Charge"
-            ]
+                "Pricing configuration in Product Rate Plan Charge",
+            ],
         },
         "multiAttributePricing": {
             "title": "Multi-Attribute Pricing",
@@ -2829,12 +2692,12 @@ def get_zuora_documentation(
                 "Attributes: Pricing dimensions like Region, Tier, Size",
                 "Price Matrix: Combinations of attribute values mapped to prices",
                 "Default Pricing: Fallback when no exact match found",
-                "Override: Subscription-level price changes"
+                "Override: Subscription-level price changes",
             ],
             "api_endpoints": [
                 "Product Rate Plan Charge configuration",
-                "Charge override in Orders API"
-            ]
+                "Charge override in Orders API",
+            ],
         },
         "customFields": {
             "title": "Custom Fields",
@@ -2844,35 +2707,35 @@ def get_zuora_documentation(
                 "Objects: Account, Subscription, RatePlan, Charge, Invoice, etc.",
                 "Field Types: Text, Number, Date, Picklist, Checkbox",
                 "Naming: API names end with __c suffix",
-                "Usage: Available in API, UI, Reports, fieldLookup()"
+                "Usage: Available in API, UI, Reports, fieldLookup()",
             ],
             "api_endpoints": [
                 "POST /v1/settings/custom-fields (create field)",
                 "GET /v1/settings/custom-fields (list fields)",
-                "Include in object CRUD operations"
-            ]
-        }
+                "Include in object CRUD operations",
+            ],
+        },
     }
 
     doc = docs.get(topic, {})
 
     output = f"""
-## Zuora Documentation: {doc.get('title', topic)}
+## Zuora Documentation: {doc.get("title", topic)}
 
 ### Official Documentation
-**URL:** {doc.get('url', 'URL not available')}
+**URL:** {doc.get("url", "URL not available")}
 
 ---
 
 ### Summary
-{doc.get('summary', 'No summary available')}
+{doc.get("summary", "No summary available")}
 
 ---
 
 ### Key Concepts
 
 """
-    for concept in doc.get('key_concepts', []):
+    for concept in doc.get("key_concepts", []):
         output += f"- **{concept.split(':')[0]}**: {':'.join(concept.split(':')[1:]).strip() if ':' in concept else concept}\n"
 
     output += """
@@ -2881,7 +2744,7 @@ def get_zuora_documentation(
 ### Related API Endpoints
 
 """
-    for endpoint in doc.get('api_endpoints', []):
+    for endpoint in doc.get("api_endpoints", []):
         output += f"- `{endpoint}`\n"
 
     output += f"""
@@ -2891,13 +2754,24 @@ def get_zuora_documentation(
 
 """
     tool_mapping = {
-        "prepaid": ["generate_prepaid_config", "generate_workflow_config", "generate_order_payload"],
+        "prepaid": [
+            "generate_prepaid_config",
+            "generate_workflow_config",
+            "generate_order_payload",
+        ],
         "workflow": ["generate_workflow_config", "generate_notification_rule"],
         "notification": ["generate_notification_rule", "generate_workflow_config"],
         "orders": ["generate_order_payload", "generate_workflow_config"],
-        "fieldLookup": ["explain_field_lookup", "generate_prepaid_config", "generate_order_payload"],
-        "multiAttributePricing": ["generate_multi_attribute_pricing", "explain_field_lookup"],
-        "customFields": ["generate_custom_field_definition", "explain_field_lookup"]
+        "fieldLookup": [
+            "explain_field_lookup",
+            "generate_prepaid_config",
+            "generate_order_payload",
+        ],
+        "multiAttributePricing": [
+            "generate_multi_attribute_pricing",
+            "explain_field_lookup",
+        ],
+        "customFields": ["generate_custom_field_definition", "explain_field_lookup"],
     }
 
     for tool_name in tool_mapping.get(topic, []):
