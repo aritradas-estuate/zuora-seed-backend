@@ -28,6 +28,16 @@ from .validation_utils import (
 # All functions are imported at the top of this file
 
 
+# ============ Utility Tools ============
+
+
+@tool
+def get_current_date() -> str:
+    """Get the current date in YYYY-MM-DD format. Useful for setting effective dates."""
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    return f"Today's date is: {today}"
+
+
 # ============ Payload State Keys ============
 PAYLOADS_STATE_KEY = "zuora_api_payloads"
 
