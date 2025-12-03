@@ -826,6 +826,38 @@ def _normalize_charge_model(model: str) -> str:
     return CHARGE_MODEL_MAPPING.get(normalized, model)
 
 
+def _infer_charge_model_conservative(
+    charge_type: Optional[str],
+    price: Optional[float],
+    uom: Optional[str],
+    name: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Conservatively infer charge model from context.
+
+    Only infers when the context is very clear and unambiguous.
+    Returns None if inference is not confident enough.
+
+    Rules (conservative):
+    1. If UOM is provided AND charge_type is Usage → Per Unit Pricing
+    2. If price is provided AND NO UOM AND charge_type is Recurring/OneTime → Flat Fee Pricing
+
+    Does NOT infer in ambiguous cases - returns None so a placeholder is created.
+    """
+    # Rule 1: Usage charge with UOM → Per Unit Pricing
+    # This is a very clear signal - usage charges with a unit of measure are per-unit
+    if charge_type == "Usage" and uom:
+        return "Per Unit Pricing"
+
+    # Rule 2: Recurring/OneTime with price but NO UOM → Flat Fee Pricing
+    # A fixed price without a unit of measure strongly suggests flat fee
+    if charge_type in ("Recurring", "OneTime") and price is not None and not uom:
+        return "Flat Fee Pricing"
+
+    # All other cases are ambiguous - don't infer, let placeholder be created
+    return None
+
+
 @tool(context=True)
 def create_charge(
     tool_context: ToolContext,
@@ -887,6 +919,16 @@ def create_charge(
     if charge_model:
         # Normalize charge model to Zuora API value
         payload_data["chargeModel"] = _normalize_charge_model(charge_model)
+    else:
+        # Try conservative inference when charge_model is not explicitly provided
+        inferred_model = _infer_charge_model_conservative(
+            charge_type=charge_type,
+            price=price,
+            uom=uom,
+            name=name,
+        )
+        if inferred_model:
+            payload_data["chargeModel"] = inferred_model
 
     # Required fields with smart defaults (per Zuora v1 API)
     payload_data["billCycleType"] = bill_cycle_type

@@ -356,6 +356,106 @@ def generate_placeholder_payload(
     return (complete_payload, placeholder_list)
 
 
+def _get_env_options(option_type: str) -> List[str]:
+    """
+    Get environment-specific options from Zuora settings.
+    Returns empty list if settings not available.
+    """
+    try:
+        from .zuora_settings import (
+            get_available_charge_models,
+            get_available_billing_periods,
+            get_available_billing_cycle_types,
+            get_available_currencies,
+            is_settings_loaded,
+        )
+
+        if not is_settings_loaded():
+            return []
+
+        if option_type == "charge_models":
+            return get_available_charge_models()
+        elif option_type == "billing_periods":
+            return get_available_billing_periods()
+        elif option_type == "billing_cycle_types":
+            return get_available_billing_cycle_types()
+        elif option_type == "currencies":
+            return get_available_currencies()
+    except ImportError:
+        pass
+    return []
+
+
+def _get_placeholder_question(field_name: str, api_type: str) -> str:
+    """
+    Generate a natural language question for a placeholder field.
+    Uses environment settings when available to show actual options.
+    """
+    field_lower = field_name.lower()
+
+    if field_lower == "chargemodel":
+        models = _get_env_options("charge_models")
+        if models:
+            # Show first 5 options to keep it concise
+            options = ", ".join(models[:5])
+            if len(models) > 5:
+                options += f", etc. ({len(models)} total)"
+            return f"What pricing model would you like for this charge? Available options: {options}"
+        return "What pricing model would you like? (e.g., Flat Fee Pricing, Per Unit Pricing, Tiered Pricing, Volume Pricing)"
+
+    elif field_lower == "billingperiod":
+        periods = _get_env_options("billing_periods")
+        if periods:
+            options = ", ".join(periods[:6])
+            if len(periods) > 6:
+                options += ", etc."
+            return f"What billing period should this charge use? Available options: {options}"
+        return "What billing period? (e.g., Month, Quarter, Annual, Week)"
+
+    elif field_lower == "billcycletype":
+        types = _get_env_options("billing_cycle_types")
+        if types:
+            return f"What bill cycle type? Options: {', '.join(types)}"
+        return "What bill cycle type? (e.g., DefaultFromCustomer, SpecificDayofMonth, SubscriptionStartDay)"
+
+    elif field_lower == "productrateplanchargertierdata":
+        return "What is the price for this charge? (e.g., $49.99)"
+
+    elif field_lower == "productrateplanid":
+        return "Which rate plan should this charge belong to?"
+
+    elif field_lower == "productid":
+        return "Which product should this rate plan belong to?"
+
+    elif field_lower == "uom":
+        return "What unit of measure for this usage charge? (e.g., api_call, GB, user, transaction, message)"
+
+    elif field_lower == "name":
+        return f"What should this {api_type.replace('_', ' ')} be named?"
+
+    elif field_lower == "chargetype":
+        return "What type of charge? (Recurring, OneTime, or Usage)"
+
+    elif field_lower == "triggerevent":
+        return "When should billing start? (ContractEffective, ServiceActivation, or CustomerAcceptance)"
+
+    elif field_lower in ("effectivestartdate", "effectiveenddate"):
+        return f"What date should be used for {field_name}? (format: YYYY-MM-DD)"
+
+    elif field_lower == "sku":
+        return "What SKU (product code) would you like?"
+
+    elif field_lower == "currency":
+        currencies = _get_env_options("currencies")
+        if currencies:
+            return f"What currency? Available: {', '.join(currencies[:5])}"
+        return "What currency? (e.g., USD, EUR, GBP)"
+
+    else:
+        # Generic fallback
+        return f"What value should '{field_name}' have?"
+
+
 def format_placeholder_warning(
     api_type: str,
     placeholder_list: List[str],
@@ -364,7 +464,10 @@ def format_placeholder_warning(
     total_count: int = 1,
 ) -> str:
     """
-    Format a user-friendly warning about placeholders in the generated payload.
+    Format a user-friendly message about placeholders with natural language questions.
+
+    Instead of showing tool commands (which users cannot execute), this generates
+    natural language questions that the agent can ask the user.
 
     Args:
         api_type: The API type
@@ -374,29 +477,38 @@ def format_placeholder_warning(
         total_count: Total number of payloads of this type
 
     Returns:
-        HTML-formatted warning message
+        HTML-formatted message with clarifying questions
     """
     import json
 
     payload_id = payload.get("payload_id", "N/A")
+    payload_name = payload.get("payload", {}).get("name", "unnamed")
 
-    output = f"<h4>✅ Created {api_type} Payload (with placeholders)</h4>\n"
+    output = f"<h4>✅ Created {api_type} Payload</h4>\n"
+    output += f"<p><strong>Name:</strong> {payload_name}</p>\n"
     output += f"<p><strong>Payload ID:</strong> <code>{payload_id}</code></p>\n"
-    output += f"<p><strong>Index:</strong> {current_index} (of {total_count} {api_type} payload{'s' if total_count > 1 else ''})</p>\n"
-    output += f"<p>I've generated the payload with <strong>{len(placeholder_list)}</strong> placeholder(s) for missing information:</p>\n"
-    output += "<ul>\n"
 
-    for field in placeholder_list:
-        output += f"  <li><code>{field}</code></li>\n"
-
-    output += "</ul>\n"
-
-    # Show explicit update command examples
-    output += "<p><strong>⚠️ To fill in placeholders, use:</strong></p>\n"
     if placeholder_list:
-        example_field = placeholder_list[0]
-        output += f"<pre><code>update_payload(api_type='{api_type}', payload_id='{payload_id}', field_path='{example_field}', new_value='YOUR_VALUE')</code></pre>\n"
+        output += f"<p>I need <strong>{len(placeholder_list)}</strong> more detail(s) to complete this:</p>\n"
+        output += "<ul>\n"
 
-    output += f"<pre><code>{json.dumps(payload, indent=2)}</code></pre>\n"
+        for field in placeholder_list:
+            question = _get_placeholder_question(field, api_type)
+            output += f"  <li>{question}</li>\n"
+
+        output += "</ul>\n"
+        output += "<p><em>Please provide these details and I'll complete the configuration for you.</em></p>\n"
+    else:
+        output += "<p>All required fields are filled in.</p>\n"
+
+    # Show the payload structure (collapsed for long payloads)
+    payload_json = json.dumps(payload.get("payload", payload), indent=2)
+    if len(payload_json) > 500:
+        output += "<details>\n"
+        output += "<summary>View payload details</summary>\n"
+        output += f"<pre><code>{payload_json}</code></pre>\n"
+        output += "</details>\n"
+    else:
+        output += f"<pre><code>{payload_json}</code></pre>\n"
 
     return output
