@@ -342,7 +342,11 @@ def generate_placeholder_payload(
 
 
 def format_placeholder_warning(
-    api_type: str, placeholder_list: List[str], payload: Dict[str, Any]
+    api_type: str,
+    placeholder_list: List[str],
+    payload: Dict[str, Any],
+    current_index: int = 0,
+    total_count: int = 1,
 ) -> str:
     """
     Format a user-friendly warning about placeholders in the generated payload.
@@ -351,13 +355,19 @@ def format_placeholder_warning(
         api_type: The API type
         placeholder_list: List of field names that have placeholders
         payload: The complete payload with placeholders
+        current_index: Index of this payload among same-type payloads (0-based)
+        total_count: Total number of payloads of this type
 
     Returns:
         HTML-formatted warning message
     """
     import json
 
+    payload_id = payload.get("payload_id", "N/A")
+
     output = f"<h4>✅ Created {api_type} Payload (with placeholders)</h4>\n"
+    output += f"<p><strong>Payload ID:</strong> <code>{payload_id}</code></p>\n"
+    output += f"<p><strong>Index:</strong> {current_index} (of {total_count} {api_type} payload{'s' if total_count > 1 else ''})</p>\n"
     output += f"<p>I've generated the payload with <strong>{len(placeholder_list)}</strong> placeholder(s) for missing information:</p>\n"
     output += "<ul>\n"
 
@@ -365,17 +375,13 @@ def format_placeholder_warning(
         output += f"  <li><code>{field}</code></li>\n"
 
     output += "</ul>\n"
-    output += "<p><strong>⚠️ Next Steps:</strong></p>\n"
-    output += "<ol>\n"
-    output += "  <li>Review the payload below</li>\n"
-    output += "  <li>Use <code>update_payload()</code> to replace placeholder values with actual data</li>\n"
-    output += "  <li>Verify all placeholders are resolved before API execution</li>\n"
-    output += "</ol>\n"
-    output += f"<p><strong>Payload ID:</strong> <code>{payload.get('payload_id', 'N/A')}</code></p>\n"
+
+    # Show explicit update command examples
+    output += "<p><strong>⚠️ To fill in placeholders, use:</strong></p>\n"
+    if placeholder_list:
+        example_field = placeholder_list[0]
+        output += f"<pre><code>update_payload(api_type='{api_type}', payload_id='{payload_id}', field_path='{example_field}', new_value='YOUR_VALUE')</code></pre>\n"
+
     output += f"<pre><code>{json.dumps(payload, indent=2)}</code></pre>\n"
-    output += (
-        "<p><em>Tip: Search for '&lt;&lt;PLACEHOLDER' in the payload to find "
-        "values that need to be filled in.</em></p>"
-    )
 
     return output

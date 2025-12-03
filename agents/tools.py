@@ -73,26 +73,90 @@ def update_payload(
     api_type: str,
     field_path: str,
     new_value: Any,
-    payload_index: int = 0,
+    payload_id: Optional[str] = None,
+    payload_index: Optional[int] = None,
 ) -> str:
-    """Update field in payload using dot notation (e.g., 'ratePlans.0.charges.0.price'). Auto-removes placeholders."""
+    """Update field in payload. Identify by payload_id (preferred) or payload_index.
+
+    Args:
+        api_type: Payload type (e.g., 'charge_create', 'product_create')
+        field_path: Dot notation path to field (e.g., 'includedUnits', 'pricing.0.price')
+        new_value: New value to set
+        payload_id: Unique payload ID (preferred - from create response)
+        payload_index: Index among payloads of same type (0=first, 1=second)
+    """
     payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
 
-    # Find matching payloads
-    matching_indices = [
-        i
+    # Find matching payloads by api_type
+    matching = [
+        (i, p)
         for i, p in enumerate(payloads)
         if p.get("zuora_api_type", "").lower() == api_type.lower()
     ]
 
-    if not matching_indices:
-        return f"Error: No payload found with type '{api_type}'"
+    if not matching:
+        available_types = set(p.get("zuora_api_type", "") for p in payloads)
+        return f"<p>❌ <strong>Error:</strong> No payload found with type '<code>{api_type}</code>'.</p><p>Available types: {', '.join(available_types) if available_types else 'none'}</p>"
 
-    if payload_index >= len(matching_indices):
-        return f"Error: payload_index {payload_index} is out of range. Found {len(matching_indices)} payloads of type '{api_type}'"
+    # Determine which payload to update
+    target_idx = None
+    target_entry = None
 
-    target_idx = matching_indices[payload_index]
-    payload_entry = payloads[target_idx]
+    if payload_id:
+        # Find by payload_id (preferred)
+        for idx, p in matching:
+            if p.get("payload_id") == payload_id:
+                target_idx = idx
+                target_entry = p
+                break
+
+        if target_entry is None:
+            # payload_id not found - provide helpful error
+            error_msg = f"<p>❌ <strong>Error:</strong> No <code>{api_type}</code> payload found with payload_id '<code>{payload_id}</code>'.</p>"
+            error_msg += f"<p><strong>Available {api_type} payloads:</strong></p><ul>"
+            for _, p in matching:
+                pid = p.get("payload_id", "?")
+                name = p.get("payload", {}).get("name", "unnamed")
+                error_msg += f"<li><code>payload_id='{pid}'</code> (name: {name})</li>"
+            error_msg += "</ul>"
+            error_msg += f"<p><em>Try:</em> <code>update_payload(api_type='{api_type}', payload_id='CORRECT_ID', ...)</code></p>"
+            return error_msg
+
+    elif payload_index is not None:
+        # Find by index
+        if payload_index >= len(matching):
+            # Index out of range - provide helpful error
+            error_msg = f"<p>❌ <strong>Error:</strong> payload_index {payload_index} is out of range.</p>"
+            error_msg += f"<p><strong>Found {len(matching)} {api_type} payload(s):</strong></p><ul>"
+            for i, (_, p) in enumerate(matching):
+                pid = p.get("payload_id", "?")
+                name = p.get("payload", {}).get("name", "unnamed")
+                error_msg += f"<li>Index {i}: <code>payload_id='{pid}'</code> (name: {name})</li>"
+            error_msg += "</ul>"
+            error_msg += f"<p><em>Try:</em> <code>update_payload(api_type='{api_type}', payload_index={len(matching) - 1}, ...)</code></p>"
+            return error_msg
+
+        target_idx, target_entry = matching[payload_index]
+
+    else:
+        # Neither specified - auto-select if only one, else require specification
+        if len(matching) == 1:
+            # Only one payload, use it automatically
+            target_idx, target_entry = matching[0]
+        else:
+            # Multiple payloads - need to specify which one
+            error_msg = f"<p>❌ <strong>Error:</strong> Multiple <code>{api_type}</code> payloads found. Please specify which one to update.</p>"
+            error_msg += f"<p><strong>Found {len(matching)} {api_type} payload(s):</strong></p><ul>"
+            for i, (_, p) in enumerate(matching):
+                pid = p.get("payload_id", "?")
+                name = p.get("payload", {}).get("name", "unnamed")
+                error_msg += f"<li><code>payload_id='{pid}'</code> OR <code>payload_index={i}</code> (name: {name})</li>"
+            error_msg += "</ul>"
+            error_msg += f"<p><strong>Use payload_id (preferred):</strong></p>"
+            error_msg += f"<pre><code>update_payload(api_type='{api_type}', payload_id='ID', field_path='{field_path}', new_value={repr(new_value)})</code></pre>"
+            return error_msg
+
+    payload_entry = target_entry
     payload = payload_entry["payload"]
 
     # Navigate to the field using dot notation
@@ -216,14 +280,27 @@ def create_payload(
     payloads.append(new_payload)
     tool_context.agent.state.set(PAYLOADS_STATE_KEY, payloads)
 
+    # Count payloads of same type for index info
+    same_type_count = len(
+        [p for p in payloads if p.get("zuora_api_type", "").lower() == api_type.lower()]
+    )
+    current_index = same_type_count - 1  # 0-based index of this payload
+
     # Generate output
     if placeholder_list:
-        # Return warning about placeholders
-        return format_placeholder_warning(api_type, placeholder_list, new_payload)
+        # Return warning about placeholders (with index info)
+        return format_placeholder_warning(
+            api_type, placeholder_list, new_payload, current_index, same_type_count
+        )
     else:
         # Generate normal success output with reference documentation for nested objects
         output = f"<h4>✅ Created {api_type} Payload</h4>\n"
         output += f"<p><strong>Payload ID:</strong> <code>{new_payload['payload_id']}</code></p>\n"
+        output += f"<p><strong>Index:</strong> {current_index} (of {same_type_count} {api_type} payload{'s' if same_type_count > 1 else ''})</p>\n"
+
+        # Add update hint if there are multiple payloads of same type
+        if same_type_count > 1:
+            output += f"<p><em>To update this payload:</em> <code>update_payload(api_type='{api_type}', payload_id='{new_payload['payload_id']}', field_path='...', new_value=...)</code></p>\n"
 
         # Check if this is a nested payload with objects array
         if "objects" in complete_payload:
