@@ -642,8 +642,15 @@ def create_product(
     description: Optional[str] = None,
     effective_end_date: Optional[str] = None,
 ) -> str:
-    """Generate payload to create new product. Missing fields will use placeholders."""
+    """Generate payload to create new product. Missing fields will use smart defaults.
+
+    Per Zuora v1 API, both effectiveStartDate and effectiveEndDate are required.
+    Smart defaults:
+    - effectiveStartDate: today's date if not provided
+    - effectiveEndDate: 10 years from start date if not provided
+    """
     from datetime import datetime
+    from dateutil.relativedelta import relativedelta
 
     # Build product payload with provided values
     payload_data = {"name": name}
@@ -661,6 +668,13 @@ def create_product(
                 f"effective_start_date must be YYYY-MM-DD format (e.g., 2024-01-01), got: {effective_start_date}",
             )
         payload_data["effectiveStartDate"] = effective_start_date
+
+    # effectiveEndDate is required by Zuora v1 API - apply smart default
+    if not effective_end_date:
+        # Default to 10 years from start date
+        start_dt = datetime.strptime(effective_start_date, "%Y-%m-%d")
+        end_dt = start_dt + relativedelta(years=10)
+        effective_end_date = end_dt.strftime("%Y-%m-%d")
 
     if effective_end_date:
         if not validate_date_format(effective_end_date):
@@ -747,22 +761,79 @@ def create_rate_plan(
     return create_payload(tool_context, "rate_plan_create", payload_data)
 
 
+# Mapping from simplified charge model names to Zuora API values
+CHARGE_MODEL_MAPPING = {
+    "flatfee": "Flat Fee Pricing",
+    "flat fee": "Flat Fee Pricing",
+    "flat fee pricing": "Flat Fee Pricing",
+    "perunit": "Per Unit Pricing",
+    "per unit": "Per Unit Pricing",
+    "per unit pricing": "Per Unit Pricing",
+    "tiered": "Tiered Pricing",
+    "tiered pricing": "Tiered Pricing",
+    "volume": "Volume Pricing",
+    "volume pricing": "Volume Pricing",
+    "overage": "Overage Pricing",
+    "overage pricing": "Overage Pricing",
+    "tiered with overage": "Tiered with Overage Pricing",
+    "tiered with overage pricing": "Tiered with Overage Pricing",
+    "discount-fixed": "Discount-Fixed Amount",
+    "discount-fixed amount": "Discount-Fixed Amount",
+    "discount-percentage": "Discount-Percentage",
+    "discount-pct": "Discount-Percentage",
+}
+
+
+def _normalize_charge_model(model: str) -> str:
+    """Convert simplified charge model name to Zuora API value."""
+    if not model:
+        return model
+    normalized = model.lower().strip()
+    return CHARGE_MODEL_MAPPING.get(normalized, model)
+
+
 @tool(context=True)
 def create_charge(
     tool_context: ToolContext,
     rate_plan_id: Optional[str] = None,
     name: Optional[str] = None,
     charge_type: Optional[Literal["Recurring", "OneTime", "Usage"]] = None,
-    charge_model: Optional[Literal["FlatFee", "PerUnit", "Tiered", "Volume"]] = None,
+    charge_model: Optional[str] = None,
     price: Optional[float] = None,
     billing_period: Optional[
-        Literal["Month", "Quarter", "Annual", "Week", "Day"]
+        Literal["Month", "Quarter", "Annual", "Semi-Annual", "Week", "Specific Months"]
     ] = None,
-    billing_timing: Literal["InAdvance", "InArrears"] = "InAdvance",
+    billing_timing: Literal["In Advance", "In Arrears"] = "In Advance",
+    bill_cycle_type: Literal[
+        "DefaultFromCustomer",
+        "SpecificDayofMonth",
+        "SubscriptionStartDay",
+        "ChargeTriggerDay",
+    ] = "DefaultFromCustomer",
+    trigger_event: Literal[
+        "ContractEffective", "ServiceActivation", "CustomerAcceptance"
+    ] = "ContractEffective",
     uom: Optional[str] = None,
     description: Optional[str] = None,
+    currency: str = "USD",
 ) -> str:
-    """Generate charge creation payload. Missing required fields will use placeholders."""
+    """Generate charge creation payload per Zuora v1 API schema.
+
+    Required fields per Zuora API:
+    - name, productRatePlanId, chargeModel, chargeType
+    - billCycleType, billingPeriod, triggerEvent
+    - productRatePlanChargeTierData (pricing container)
+
+    Smart defaults applied:
+    - billCycleType: DefaultFromCustomer
+    - triggerEvent: ContractEffective
+    - billingTiming: In Advance
+    - billingPeriod: Month (for Recurring charges)
+    - currency: USD
+
+    charge_model accepts simplified names (e.g., 'FlatFee', 'PerUnit') which are
+    automatically converted to Zuora API values ('Flat Fee Pricing', 'Per Unit Pricing').
+    """
     # Build charge payload with provided values
     payload_data = {}
 
@@ -780,22 +851,37 @@ def create_charge(
         payload_data["chargeType"] = charge_type
 
     if charge_model:
-        payload_data["chargeModel"] = charge_model
+        # Normalize charge model to Zuora API value
+        payload_data["chargeModel"] = _normalize_charge_model(charge_model)
 
-    # Always include billing timing (has default)
+    # Required fields with smart defaults (per Zuora v1 API)
+    payload_data["billCycleType"] = bill_cycle_type
+    payload_data["triggerEvent"] = trigger_event
     payload_data["billingTiming"] = billing_timing
 
     if description:
         payload_data["description"] = description
 
-    if price is not None:
-        payload_data["price"] = price
-
+    # Billing period - required, default to Month for recurring
     if billing_period:
         payload_data["billingPeriod"] = billing_period
+    elif charge_type == "Recurring":
+        payload_data["billingPeriod"] = "Month"
 
     if uom:
         payload_data["uom"] = uom
+
+    # Build productRatePlanChargeTierData (required per Zuora API)
+    # This is the container for pricing information
+    if price is not None:
+        payload_data["productRatePlanChargeTierData"] = {
+            "productRatePlanChargeTier": [
+                {
+                    "currency": currency,
+                    "price": price,
+                }
+            ]
+        }
 
     # Delegate to create_payload which handles placeholders and validation
     # It will add placeholders for conditionally required fields based on chargeType
