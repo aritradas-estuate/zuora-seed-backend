@@ -588,6 +588,7 @@ class ZuoraClient:
                 {"id": "13", "method": "GET", "url": "/numbers-and-skus"},
                 {"id": "14", "method": "GET", "url": "/security-policies"},
                 {"id": "15", "method": "GET", "url": "/subscription-settings"},
+                {"id": "16", "method": "GET", "url": "/units-of-measure"},
             ]
 
         return self._request(

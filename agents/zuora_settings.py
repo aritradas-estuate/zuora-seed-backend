@@ -178,6 +178,31 @@ def get_available_currencies() -> List[str]:
     return []
 
 
+def get_available_uoms() -> List[Dict[str, Any]]:
+    """Get list of units of measure defined in this Zuora tenant.
+
+    Returns full UOM objects with name, displayAs, precision, roundingMode,
+    active status, usageLogFileLabel, and id.
+    """
+    settings = fetch_environment_settings()
+    if "_error" in settings:
+        return []
+
+    uom_data = settings.get("units-of-measure", {})
+
+    if isinstance(uom_data, dict):
+        return uom_data.get("unitsOfMeasure", [])
+    elif isinstance(uom_data, list):
+        return uom_data
+    return []
+
+
+def get_available_uom_names() -> List[str]:
+    """Get list of active UOM names (strings only) for validation."""
+    uoms = get_available_uoms()
+    return [uom.get("name", "") for uom in uoms if uom.get("active", True)]
+
+
 def get_billing_rules() -> Dict[str, Any]:
     """Get billing rules configuration."""
     settings = fetch_environment_settings()
@@ -246,6 +271,13 @@ def get_environment_summary() -> str:
         summary += f"  - {bct}\n"
     summary += "\n"
 
+    # Units of Measure
+    uom_names = get_available_uom_names()
+    summary += f"**Units of Measure ({len(uom_names)}):**\n"
+    for uom in uom_names:
+        summary += f"  - {uom}\n"
+    summary += "\n"
+
     # Key Billing Rules
     billing_rules = get_billing_rules()
     if billing_rules:
@@ -294,6 +326,11 @@ def get_environment_context_for_prompt() -> str:
         lines.append(
             f"**Available Bill Cycle Types:** {', '.join(billing_cycle_types)}\n"
         )
+
+    # Units of Measure (important for usage charge validation)
+    uom_names = get_available_uom_names()
+    if uom_names:
+        lines.append(f"**Available UOMs:** {', '.join(uom_names)}\n")
 
     # Key billing rules
     billing_rules = get_billing_rules()

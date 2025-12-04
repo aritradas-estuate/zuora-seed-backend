@@ -3,7 +3,10 @@ from strands.types.tools import ToolContext
 from typing import Optional, List, Dict, Any, Literal, Tuple
 import datetime
 import json
+import logging
 import uuid
+
+logger = logging.getLogger(__name__)
 from .models import ProductSpec, ZuoraApiType
 from .zuora_client import get_zuora_client
 from .observability import trace_function
@@ -1098,6 +1101,15 @@ def create_charge(
         payload_data["BillingPeriod"] = "Month"
 
     if uom:
+        # Validate UOM against available UOMs in the tenant
+        from .zuora_settings import get_available_uom_names
+
+        available_uoms = get_available_uom_names()
+        if available_uoms and uom not in available_uoms:
+            logger.warning(
+                f"UOM '{uom}' not found in tenant's available UOMs: {available_uoms}. "
+                "This may cause an API error."
+            )
         payload_data["UOM"] = uom
 
     # Build ProductRatePlanChargeTierData (required per Zuora API)
