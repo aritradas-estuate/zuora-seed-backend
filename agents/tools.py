@@ -319,6 +319,18 @@ def update_payload(
                 f"'{final_key}' appears to be an invalid Zuora ID: {new_value}",
             )
 
+    # Ensure arrays/objects aren't stored as strings (common when LLM passes JSON as string)
+    if isinstance(new_value, str):
+        stripped = new_value.strip()
+        if (stripped.startswith("[") and stripped.endswith("]")) or (
+            stripped.startswith("{") and stripped.endswith("}")
+        ):
+            try:
+                new_value = json.loads(new_value)
+                logger.debug(f"Parsed JSON string to object for field '{final_key}'")
+            except json.JSONDecodeError:
+                pass  # Keep as string if not valid JSON
+
     # Set the value
     if final_key.isdigit():
         current[int(final_key)] = new_value
@@ -991,6 +1003,7 @@ def create_charge(
     charge_type: Optional[Literal["Recurring", "OneTime", "Usage"]] = None,
     charge_model: Optional[str] = None,
     price: Optional[float] = None,
+    tiers: Optional[List[Dict[str, Any]]] = None,
     billing_period: Optional[
         Literal["Month", "Quarter", "Annual", "Semi-Annual", "Week", "Specific Months"]
     ] = None,
@@ -1033,7 +1046,13 @@ def create_charge(
         name: Charge name
         charge_type: OneTime, Recurring, or Usage
         charge_model: Pricing model (accepts simplified names like 'FlatFee' or full names like 'Flat Fee Pricing')
-        price: Price amount
+        price: Price amount (for single-tier pricing: Flat Fee, Per Unit)
+        tiers: List of pricing tiers for Tiered/Volume pricing. Each tier dict should have:
+               - Price (required): Price for this tier
+               - StartingUnit: Unit where tier starts (default: 0 for first tier)
+               - EndingUnit: Unit where tier ends (omit for unlimited/last tier)
+               - PriceFormat: "Per Unit" or "Flat Fee" (default: "Per Unit")
+               - Currency: Override currency for this tier (default: uses charge currency)
         billing_period: Month, Quarter, Annual, etc.
         billing_timing: In Advance or In Arrears
         bill_cycle_type: When to bill
@@ -1041,6 +1060,36 @@ def create_charge(
         uom: Unit of measure for usage charges
         description: Charge description
         currency: Currency code (default: USD)
+
+    Examples:
+        # Flat Fee Pricing (single price)
+        create_charge(name="Monthly Fee", charge_type="Recurring", charge_model="Flat Fee Pricing", price=99.00)
+
+        # Tiered Pricing (multiple tiers based on quantity)
+        create_charge(
+            name="API Calls",
+            charge_type="Usage",
+            charge_model="Tiered Pricing",
+            uom="Calls",
+            tiers=[
+                {"StartingUnit": 0, "EndingUnit": 1000, "Price": 0.10},
+                {"StartingUnit": 1001, "EndingUnit": 10000, "Price": 0.08},
+                {"StartingUnit": 10001, "Price": 0.05},  # No EndingUnit = unlimited
+            ]
+        )
+
+        # Volume Pricing (single price based on total volume)
+        create_charge(
+            name="Storage",
+            charge_type="Usage",
+            charge_model="Volume Pricing",
+            uom="GB",
+            tiers=[
+                {"StartingUnit": 0, "EndingUnit": 100, "Price": 1.00},
+                {"StartingUnit": 101, "EndingUnit": 1000, "Price": 0.80},
+                {"StartingUnit": 1001, "Price": 0.50},
+            ]
+        )
     """
     # Build charge payload with provided values - use PascalCase for Zuora v1 CRUD API
     payload_data = {}
@@ -1114,7 +1163,30 @@ def create_charge(
 
     # Build ProductRatePlanChargeTierData (required per Zuora API)
     # This is the container for pricing information
-    if price is not None:
+    if tiers:
+        # Multiple tiers for Tiered/Volume pricing
+        tier_data = []
+        for i, tier in enumerate(tiers):
+            tier_entry = {
+                "Currency": tier.get("Currency", currency),
+                "Price": tier.get("Price", 0),
+                "Tier": tier.get("Tier", i + 1),
+            }
+            # StartingUnit/EndingUnit for tiered/volume pricing
+            if "StartingUnit" in tier:
+                tier_entry["StartingUnit"] = tier["StartingUnit"]
+            if "EndingUnit" in tier:
+                tier_entry["EndingUnit"] = tier["EndingUnit"]
+            # PriceFormat: "Per Unit" or "Flat Fee"
+            if "PriceFormat" in tier:
+                tier_entry["PriceFormat"] = tier["PriceFormat"]
+            tier_data.append(tier_entry)
+
+        payload_data["ProductRatePlanChargeTierData"] = {
+            "ProductRatePlanChargeTier": tier_data
+        }
+    elif price is not None:
+        # Single tier for Flat Fee/Per Unit pricing
         payload_data["ProductRatePlanChargeTierData"] = {
             "ProductRatePlanChargeTier": [
                 {

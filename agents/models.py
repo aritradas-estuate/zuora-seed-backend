@@ -4,12 +4,20 @@ from enum import Enum
 
 
 class Tier(BaseModel):
-    """Pricing tier for tiered/volume pricing models."""
+    """Pricing tier for tiered/volume pricing models.
 
-    startingUnit: float
-    endingUnit: Optional[float] = None
-    price: float
-    priceFormat: Literal["FlatFee", "PerUnit"] = "PerUnit"
+    Fields match Zuora v1 API ProductRatePlanChargeTier object.
+    See: https://developer.zuora.com/v1-api-reference/api/operation/Object_POSTProductRatePlanCharge/
+    """
+
+    Currency: str = "USD"
+    Price: float
+    StartingUnit: Optional[float] = None
+    EndingUnit: Optional[float] = None
+    PriceFormat: Literal["Per Unit", "Flat Fee"] = "Per Unit"
+    Tier: Optional[int] = (
+        None  # Tier number (1, 2, 3, etc.) - auto-assigned if not provided
+    )
 
 
 # Zuora v1 API ChargeModel enum values (exact strings from API)
