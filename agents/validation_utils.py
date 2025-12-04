@@ -150,14 +150,17 @@ def validate_sku_format(sku: str) -> Tuple[bool, Optional[str]]:
     return True, None
 
 
-def format_error_message(error: str) -> str:
+def format_error_message(title: str, detail: str = "") -> str:
     """
     Format validation error message with emoji.
 
     Args:
-        error: Error message
+        title: Error title/type
+        detail: Optional detailed error message
 
     Returns:
         Formatted error string with ❌ emoji
     """
-    return f"❌ {error}"
+    if detail:
+        return f"❌ {title}: {detail}"
+    return f"❌ {title}"

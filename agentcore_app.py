@@ -1,7 +1,8 @@
 from bedrock_agentcore import BedrockAgentCoreApp
-from typing import List, Dict, TYPE_CHECKING
+from typing import List, Dict, Any, TYPE_CHECKING
 import uuid
 import time
+import random
 from agents.observability import (
     initialize_observability,
     get_tracer,
@@ -19,7 +20,7 @@ if TYPE_CHECKING:
 app = BedrockAgentCoreApp()
 
 # Cache agents by persona for efficiency
-_agent_cache: Dict[str, any] = {}
+_agent_cache: Dict[str, Any] = {}
 
 # State keys (hardcoded to avoid import)
 PAYLOADS_STATE_KEY = "zuora_api_payloads"
@@ -67,39 +68,216 @@ def get_agent_for_persona(persona: str):
     return _agent_cache[persona]
 
 
-def generate_mock_citations(persona: str) -> List[dict]:
-    """Generate mock citations based on persona (placeholder for future Bedrock KB integration)."""
+# Citation pools for content-aware selection
+PRODUCT_MANAGER_CITATIONS = [
+    {
+        "id": "pm-1",
+        "title": "Zuora Product Catalog Guide",
+        "uri": "s3://zuora-kb/product-catalog-guide.pdf",
+        "url": "https://knowledgecenter.zuora.com/Zuora_Billing/Build_products_and_prices",
+        "keywords": ["product", "catalog", "setup", "create"],
+    },
+    {
+        "id": "pm-2",
+        "title": "Charge Models Overview",
+        "uri": "s3://zuora-kb/charge-models.pdf",
+        "url": "https://knowledgecenter.zuora.com/Zuora_Billing/Build_products_and_prices/Charge_Models",
+        "keywords": ["charge model", "flat fee", "per unit", "pricing model"],
+    },
+    {
+        "id": "pm-3",
+        "title": "Create Product Rate Plan Charges",
+        "uri": "s3://zuora-kb/rate-plan-charges.pdf",
+        "url": "https://knowledgecenter.zuora.com/Zuora_Billing/Build_products_and_prices/Create_product_rate_plan_charges",
+        "keywords": ["rate plan", "charge", "create", "add"],
+    },
+    {
+        "id": "pm-4",
+        "title": "Tiered and Volume Pricing",
+        "uri": "s3://zuora-kb/tiered-volume-pricing.pdf",
+        "url": "https://knowledgecenter.zuora.com/Zuora_Billing/Build_products_and_prices/Tiered_and_Volume_Pricing",
+        "keywords": ["tiered", "volume", "tier", "pricing", "graduated"],
+    },
+    {
+        "id": "pm-5",
+        "title": "Usage-Based Billing",
+        "uri": "s3://zuora-kb/usage-billing.pdf",
+        "url": "https://knowledgecenter.zuora.com/Zuora_Billing/Build_products_and_prices/Usage_Based_Billing",
+        "keywords": ["usage", "metered", "consumption", "uom", "unit of measure"],
+    },
+    {
+        "id": "pm-6",
+        "title": "Product Catalog API Reference",
+        "uri": "s3://zuora-kb/catalog-api.pdf",
+        "url": "https://developer.zuora.com/v1-api-reference/api/tag/Catalog/",
+        "keywords": ["api", "catalog", "list", "get", "products"],
+    },
+    {
+        "id": "pm-7",
+        "title": "Discount Charge Models",
+        "uri": "s3://zuora-kb/discount-models.pdf",
+        "url": "https://knowledgecenter.zuora.com/Zuora_Billing/Build_products_and_prices/Discount_Charge_Models",
+        "keywords": ["discount", "percentage", "fixed amount", "promo"],
+    },
+    {
+        "id": "pm-8",
+        "title": "Billing Period Settings",
+        "uri": "s3://zuora-kb/billing-period.pdf",
+        "url": "https://knowledgecenter.zuora.com/Zuora_Billing/Build_products_and_prices/Billing_Period",
+        "keywords": ["billing period", "month", "annual", "quarter", "recurring"],
+    },
+    {
+        "id": "pm-9",
+        "title": "Bill Cycle Day Configuration",
+        "uri": "s3://zuora-kb/bill-cycle-day.pdf",
+        "url": "https://knowledgecenter.zuora.com/Zuora_Billing/Build_products_and_prices/Bill_Cycle_Day",
+        "keywords": ["bill cycle", "bcd", "billing day", "cycle"],
+    },
+    {
+        "id": "pm-10",
+        "title": "Product Effective Dates",
+        "uri": "s3://zuora-kb/effective-dates.pdf",
+        "url": "https://knowledgecenter.zuora.com/Zuora_Billing/Build_products_and_prices/Product_Effective_Dates",
+        "keywords": ["effective date", "start date", "end date", "active"],
+    },
+    {
+        "id": "pm-11",
+        "title": "Multi-Currency Configuration",
+        "uri": "s3://zuora-kb/currency.pdf",
+        "url": "https://knowledgecenter.zuora.com/Zuora_Billing/Build_products_and_prices/Currency",
+        "keywords": ["currency", "usd", "eur", "multi-currency", "price"],
+    },
+    {
+        "id": "pm-12",
+        "title": "Units of Measure (UOM)",
+        "uri": "s3://zuora-kb/uom.pdf",
+        "url": "https://knowledgecenter.zuora.com/Zuora_Billing/Build_products_and_prices/Units_of_Measure",
+        "keywords": ["uom", "unit", "measure", "usage", "quantity"],
+    },
+    {
+        "id": "pm-13",
+        "title": "One-Time Charges",
+        "uri": "s3://zuora-kb/one-time-charges.pdf",
+        "url": "https://knowledgecenter.zuora.com/Zuora_Billing/Build_products_and_prices/One_Time_Charges",
+        "keywords": ["one-time", "onetime", "setup fee", "activation"],
+    },
+    {
+        "id": "pm-14",
+        "title": "Recurring Charges",
+        "uri": "s3://zuora-kb/recurring-charges.pdf",
+        "url": "https://knowledgecenter.zuora.com/Zuora_Billing/Build_products_and_prices/Recurring_Charges",
+        "keywords": ["recurring", "subscription", "monthly", "annual"],
+    },
+    {
+        "id": "pm-15",
+        "title": "Product Rate Plan Charge Tiers API",
+        "uri": "s3://zuora-kb/charge-tiers-api.pdf",
+        "url": "https://developer.zuora.com/v1-api-reference/api/tag/Product-Rate-Plan-Charge-Tiers/",
+        "keywords": ["tier", "pricing tier", "api", "charge tier"],
+    },
+    {
+        "id": "pm-16",
+        "title": "Usage Billing - Prepayment, Credits and Commitment",
+        "uri": "s3://zuora-kb/usage-prepayment-credits.pdf",
+        "url": "https://docs.zuora.com/en/zuora-billing/bill-your-customer/usage-billing/usage-billing---prepayment-credits-and-commitment",
+        "keywords": [
+            "prepayment",
+            "credits",
+            "commitment",
+            "prepaid",
+            "drawdown",
+            "usage",
+            "wallet",
+        ],
+    },
+    {
+        "id": "pm-17",
+        "title": "Usage Billing Overview",
+        "uri": "s3://zuora-kb/usage-billing-overview.pdf",
+        "url": "https://docs.zuora.com/en/zuora-billing/bill-your-customer/usage-billing/usage",
+        "keywords": [
+            "usage",
+            "billing",
+            "metered",
+            "consumption",
+            "usage charge",
+            "usage-based",
+        ],
+    },
+]
+
+BILLING_ARCHITECT_CITATIONS = [
+    {
+        "id": "ba-1",
+        "title": "Zuora Prepaid with Drawdown Guide",
+        "uri": "s3://zuora-kb/prepaid-drawdown-guide.pdf",
+        "url": "https://knowledgecenter.zuora.com/Zuora_Billing/Build_products_and_prices/Prepaid_with_Drawdown",
+        "keywords": ["prepaid", "drawdown", "wallet", "credits", "balance"],
+    },
+    {
+        "id": "ba-2",
+        "title": "Zuora Workflows Documentation",
+        "uri": "s3://zuora-kb/workflows-guide.pdf",
+        "url": "https://knowledgecenter.zuora.com/Zuora_Central_Platform/Workflow",
+        "keywords": ["workflow", "automation", "trigger", "task"],
+    },
+    {
+        "id": "ba-3",
+        "title": "Zuora Orders API Reference",
+        "uri": "s3://zuora-kb/orders-api-reference.pdf",
+        "url": "https://knowledgecenter.zuora.com/Zuora_Billing/Manage_subscription_transactions/Orders",
+        "keywords": ["order", "subscription", "add product", "remove"],
+    },
+]
+
+
+def generate_mock_citations(persona: str, message: str = "") -> List[dict]:
+    """
+    Generate mock citations based on persona and message content.
+
+    Uses content-aware selection to pick relevant citations based on keywords
+    in the user's message, then fills remaining slots with random picks.
+    Returns max 3 citations.
+
+    Args:
+        persona: User persona (ProductManager, BillingArchitect, etc.)
+        message: User's message for content-aware keyword matching
+
+    Returns:
+        List of up to 3 citation dicts with id, title, uri, url fields
+    """
+    # Select citation pool based on persona
     if persona == "BillingArchitect":
-        return [
-            {
-                "id": "citation-billing-1",
-                "title": "Zuora Prepaid with Drawdown Guide",
-                "uri": "s3://zuora-kb/prepaid-drawdown-guide.pdf",
-                "url": "https://knowledgecenter.zuora.com/Zuora_Billing/Build_products_and_prices/Prepaid_with_Drawdown",
-            },
-            {
-                "id": "citation-billing-2",
-                "title": "Zuora Workflows Documentation",
-                "uri": "s3://zuora-kb/workflows-guide.pdf",
-                "url": "https://knowledgecenter.zuora.com/Zuora_Central_Platform/Workflow",
-            },
-            {
-                "id": "citation-billing-3",
-                "title": "Zuora Orders API Reference",
-                "uri": "s3://zuora-kb/orders-api-reference.pdf",
-                "url": "https://knowledgecenter.zuora.com/Zuora_Billing/Manage_subscription_transactions/Orders",
-            },
-        ]
+        pool = BILLING_ARCHITECT_CITATIONS
     else:
-        # Default citations for ProductManager and other personas
-        return [
-            {
-                "id": "citation-mock-1",
-                "title": "Zuora Product Catalog Guide",
-                "uri": "s3://zuora-kb/product-catalog-guide.pdf",
-                "url": "https://knowledgecenter.zuora.com/Zuora_Billing/Build_products_and_prices",
-            }
-        ]
+        # ProductManager and other personas use product manager citations
+        pool = PRODUCT_MANAGER_CITATIONS
+
+    message_lower = message.lower()
+
+    # Score citations by keyword matches in message
+    scored = []
+    for citation in pool:
+        keywords = citation.get("keywords", [])
+        score = sum(1 for kw in keywords if kw in message_lower)
+        scored.append((score, random.random(), citation))  # random for tie-breaking
+
+    # Sort by score (descending), then by random value for ties
+    scored.sort(key=lambda x: (-x[0], x[1]))
+
+    # Take top 3 citations
+    selected = [c for _, _, c in scored[:3]]
+
+    # Return without internal keywords field
+    return [
+        {
+            "id": c["id"],
+            "title": c["title"],
+            "uri": c["uri"],
+            "url": c["url"],
+        }
+        for c in selected
+    ]
 
 
 @app.entrypoint
@@ -248,8 +426,8 @@ def invoke(payload: dict) -> dict:
                         )
                     )
 
-            # Generate persona-specific citations
-            citations = generate_mock_citations(persona)
+            # Generate persona-specific citations (content-aware based on user message)
+            citations = generate_mock_citations(persona, request.message)
 
             # Build and return response
             chat_response = ChatResponse(

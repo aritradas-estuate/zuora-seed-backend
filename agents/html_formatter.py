@@ -4,7 +4,7 @@ Converts markdown-formatted text to HTML while preserving code blocks and JSON.
 """
 
 import re
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Tuple
 
 
 def html_escape(text: str) -> str:
@@ -109,20 +109,17 @@ def _convert_unordered_lists(text: str) -> str:
     lines = text.split("\n")
     result = []
     in_list = False
-    list_indent = 0
 
     for line in lines:
         # Check for list item (-, *, or bullet point)
         match = re.match(r"^(\s*)([-*\u2022])\s+(.+)$", line)
 
         if match:
-            indent = len(match.group(1))
             content = match.group(3)
 
             if not in_list:
                 result.append("<ul>")
                 in_list = True
-                list_indent = indent
 
             result.append(f"<li>{content}</li>")
         else:
