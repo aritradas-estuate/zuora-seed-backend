@@ -7,7 +7,7 @@ Extracted from tools.py to reduce code duplication.
 
 import re
 from datetime import datetime
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List
 
 
 def validate_date_format(
@@ -164,3 +164,153 @@ def format_error_message(title: str, detail: str = "") -> str:
     if detail:
         return f"❌ {title}: {detail}"
     return f"❌ {title}"
+
+
+# ============ Name Validation Functions ============
+
+MAX_NAME_LENGTH = 60
+
+
+def validate_name_length(
+    name: str, field_type: str = "Name"
+) -> Tuple[bool, Optional[str]]:
+    """
+    Validate name doesn't exceed max length.
+
+    Args:
+        name: Name string to validate
+        field_type: Type of name for error messages (e.g., "Product name", "Rate plan name")
+
+    Returns:
+        Tuple of (is_valid, warning_message)
+        warning_message is None if valid
+    """
+    if not name:
+        return (True, None)
+    if len(name) > MAX_NAME_LENGTH:
+        return (
+            False,
+            f"{field_type} exceeds {MAX_NAME_LENGTH} characters (got {len(name)}). Please shorten it.",
+        )
+    return (True, None)
+
+
+def validate_product_name_unique(
+    name: str, existing_payloads: List[dict]
+) -> Tuple[bool, Optional[str]]:
+    """
+    Check if product name is unique among existing product payloads in current session.
+
+    Args:
+        name: Product name to check
+        existing_payloads: List of payload dicts from agent state
+
+    Returns:
+        Tuple of (is_unique, warning_message)
+        warning_message is None if unique
+    """
+    if not name:
+        return (True, None)
+
+    for payload in existing_payloads:
+        if payload.get("zuora_api_type") in ("product", "product_create"):
+            existing_name = payload.get("payload", {}).get("Name") or payload.get(
+                "payload", {}
+            ).get("name")
+            if existing_name and existing_name.lower() == name.lower():
+                return (
+                    False,
+                    f"Duplicate product name '{name}' - a product with this name already exists in the current payload",
+                )
+
+    return (True, None)
+
+
+def validate_rate_plan_name_unique(
+    name: str, product_id: str, existing_payloads: List[dict]
+) -> Tuple[bool, Optional[str]]:
+    """
+    Check if rate plan name is unique within the same product in current session.
+
+    Args:
+        name: Rate plan name to check
+        product_id: Product ID or object reference this rate plan belongs to
+        existing_payloads: List of payload dicts from agent state
+
+    Returns:
+        Tuple of (is_unique, warning_message)
+        warning_message is None if unique
+    """
+    if not name:
+        return (True, None)
+
+    for payload in existing_payloads:
+        if payload.get("zuora_api_type") in (
+            "rate_plan",
+            "rate_plan_create",
+            "product_rate_plan",
+        ):
+            payload_data = payload.get("payload", {})
+            existing_name = payload_data.get("Name") or payload_data.get("name")
+            existing_product_id = payload_data.get("ProductId") or payload_data.get(
+                "productId"
+            )
+
+            # Check if same name AND same product
+            if (
+                existing_name
+                and existing_name.lower() == name.lower()
+                and existing_product_id
+                and existing_product_id == product_id
+            ):
+                return (
+                    False,
+                    f"Duplicate rate plan name '{name}' - a rate plan with this name already exists for this product",
+                )
+
+    return (True, None)
+
+
+def validate_charge_name_unique(
+    name: str, rate_plan_id: str, existing_payloads: List[dict]
+) -> Tuple[bool, Optional[str]]:
+    """
+    Check if charge name is unique within the same rate plan in current session.
+
+    Args:
+        name: Charge name to check
+        rate_plan_id: Rate plan ID or object reference this charge belongs to
+        existing_payloads: List of payload dicts from agent state
+
+    Returns:
+        Tuple of (is_unique, warning_message)
+        warning_message is None if unique
+    """
+    if not name:
+        return (True, None)
+
+    for payload in existing_payloads:
+        if payload.get("zuora_api_type") in (
+            "charge",
+            "charge_create",
+            "product_rate_plan_charge",
+        ):
+            payload_data = payload.get("payload", {})
+            existing_name = payload_data.get("Name") or payload_data.get("name")
+            existing_rp_id = payload_data.get("ProductRatePlanId") or payload_data.get(
+                "productRatePlanId"
+            )
+
+            # Check if same name AND same rate plan
+            if (
+                existing_name
+                and existing_name.lower() == name.lower()
+                and existing_rp_id
+                and existing_rp_id == rate_plan_id
+            ):
+                return (
+                    False,
+                    f"Duplicate charge name '{name}' - a charge with this name already exists for this rate plan",
+                )
+
+    return (True, None)

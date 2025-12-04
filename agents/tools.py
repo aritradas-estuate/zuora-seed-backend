@@ -23,6 +23,10 @@ from .validation_utils import (
     validate_sku_format as _validate_sku_format_tuple,
     format_error_message,
     is_object_reference,
+    validate_name_length,
+    validate_product_name_unique,
+    validate_rate_plan_name_unique,
+    validate_charge_name_unique,
 )
 
 
@@ -845,8 +849,32 @@ def create_product(
     if description:
         payload_data["Description"] = description
 
+    # Collect warnings for name validation
+    warnings = []
+
+    # Validate name length
+    is_valid_len, len_warning = validate_name_length(name, "Product name")
+    if not is_valid_len:
+        warnings.append(len_warning)
+
+    # Validate name uniqueness
+    payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
+    is_unique, unique_warning = validate_product_name_unique(name, payloads)
+    if not is_unique:
+        warnings.append(unique_warning)
+
     # Delegate to create_payload which handles placeholders and validation
-    return create_payload(tool_context, "product_create", payload_data)
+    result = create_payload(tool_context, "product_create", payload_data)
+
+    # Prepend warnings if any
+    if warnings:
+        warning_html = "<div class='warnings'><p>⚠️ <strong>Warnings:</strong></p><ul>"
+        for w in warnings:
+            warning_html += f"<li>{w}</li>"
+        warning_html += "</ul></div>"
+        result = warning_html + result
+
+    return result
 
 
 @tool(context=True)
@@ -927,8 +955,36 @@ def create_rate_plan(
             )
         payload_data["EffectiveEndDate"] = effective_end_date
 
+    # Collect warnings for name validation
+    warnings = []
+
+    if name:
+        # Validate name length
+        is_valid_len, len_warning = validate_name_length(name, "Rate plan name")
+        if not is_valid_len:
+            warnings.append(len_warning)
+
+        # Validate name uniqueness within product
+        payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
+        product_ref = payload_data.get("ProductId", "")
+        is_unique, unique_warning = validate_rate_plan_name_unique(
+            name, product_ref, payloads
+        )
+        if not is_unique:
+            warnings.append(unique_warning)
+
     # Delegate to create_payload which handles placeholders and validation
-    return create_payload(tool_context, "rate_plan_create", payload_data)
+    result = create_payload(tool_context, "rate_plan_create", payload_data)
+
+    # Prepend warnings if any
+    if warnings:
+        warning_html = "<div class='warnings'><p>⚠️ <strong>Warnings:</strong></p><ul>"
+        for w in warnings:
+            warning_html += f"<li>{w}</li>"
+        warning_html += "</ul></div>"
+        result = warning_html + result
+
+    return result
 
 
 # Mapping from simplified charge model names to Zuora API values
@@ -1196,9 +1252,35 @@ def create_charge(
             ]
         }
 
+    # Collect warnings for name validation
+    warnings = []
+
+    if name:
+        # Validate name length
+        is_valid_len, len_warning = validate_name_length(name, "Charge name")
+        if not is_valid_len:
+            warnings.append(len_warning)
+
+        # Validate name uniqueness within rate plan
+        payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
+        rp_ref = payload_data.get("ProductRatePlanId", "")
+        is_unique, unique_warning = validate_charge_name_unique(name, rp_ref, payloads)
+        if not is_unique:
+            warnings.append(unique_warning)
+
     # Delegate to create_payload which handles placeholders and validation
     # It will add placeholders for conditionally required fields based on ChargeType
-    return create_payload(tool_context, "charge_create", payload_data)
+    result = create_payload(tool_context, "charge_create", payload_data)
+
+    # Prepend warnings if any
+    if warnings:
+        warning_html = "<div class='warnings'><p>⚠️ <strong>Warnings:</strong></p><ul>"
+        for w in warnings:
+            warning_html += f"<li>{w}</li>"
+        warning_html += "</ul></div>"
+        result = warning_html + result
+
+    return result
 
 
 # ============ Billing Architect Advisory Tools ============
