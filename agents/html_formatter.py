@@ -181,7 +181,9 @@ def _convert_tables(text: str) -> str:
                 continue
 
             if not in_table:
-                result.append("<table>")
+                result.append(
+                    '<table style="border: 1px solid black; border-collapse: collapse;">'
+                )
                 in_table = True
                 header_done = False
 
@@ -189,7 +191,9 @@ def _convert_tables(text: str) -> str:
                 # This is the header row
                 result.append("<thead><tr>")
                 for cell in cells:
-                    result.append(f"<th>{cell}</th>")
+                    result.append(
+                        f'<th style="border: 1px solid black; padding: 5px;">{cell}</th>'
+                    )
                 result.append("</tr></thead>")
                 result.append("<tbody>")
                 header_done = True
@@ -197,7 +201,9 @@ def _convert_tables(text: str) -> str:
                 # Data row
                 result.append("<tr>")
                 for cell in cells:
-                    result.append(f"<td>{cell}</td>")
+                    result.append(
+                        f'<td style="border: 1px solid black; padding: 5px;">{cell}</td>'
+                    )
                 result.append("</tr>")
         else:
             if in_table:
@@ -316,6 +322,11 @@ def markdown_to_html(text: str) -> str:
     # Step 4: Restore code elements
     text = _restore_inline_code(text, inline_codes)
     text = _restore_code_blocks(text, code_blocks)
+
+    # Step 5: Replace \n with <br> for proper HTML line breaks
+    # Only replace \n that are NOT between HTML tags (i.e., content line breaks)
+    # Pattern: \n that is NOT preceded by > or followed by <
+    text = re.sub(r"(?<!>)\n(?!<)", "<br>", text)
 
     return text
 

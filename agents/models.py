@@ -116,10 +116,12 @@ class Charge(BaseModel):
     )
     currency: str = Field("USD", description="Currency code")
     includedUnits: Optional[float] = Field(
-        None, description="Included units for overage models"
+        None,
+        description="Units included before overage pricing kicks in (for Overage/Tiered with Overage)",
     )
     overagePrice: Optional[float] = Field(
-        None, description="Price per unit for overage"
+        None,
+        description="Price per unit after included units are consumed (for Overage/Tiered with Overage)",
     )
     tiers: Optional[List[Tier]] = Field(
         None, description="Pricing tiers for tiered/volume models"

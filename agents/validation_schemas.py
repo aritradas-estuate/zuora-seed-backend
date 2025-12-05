@@ -348,16 +348,16 @@ def format_validation_questions(
     Returns:
         HTML-formatted string with questions
     """
-    output = f"<h4>Clarifying Questions Needed</h4>\n"
-    output += f"<p>To create this <strong>{api_type}</strong> payload, I need the following information:</p>\n"
-    output += "<ol>\n"
+    output = f"<h4>Clarifying Questions Needed</h4><br>"
+    output += f"<p>To create this <strong>{api_type}</strong> payload, I need the following information:</p><br>"
+    output += "<ol><br>"
 
     for field_name, description in missing_fields:
         output += (
-            f"  <li>What is the <strong>{field_name}</strong>? ({description})</li>\n"
+            f"  <li>What is the <strong>{field_name}</strong>? ({description})</li><br>"
         )
 
-    output += "</ol>\n"
+    output += "</ol><br>"
     output += (
         "<p><em>Please provide these details and I'll create the payload.</em></p>"
     )
@@ -560,19 +560,19 @@ def format_placeholder_warning(
         api_type.replace("_create", "").replace("_update", "").replace("_", " ").title()
     )
 
-    output = f"<h4>Created {friendly_type}</h4>\n"
-    output += f"<p><strong>Name:</strong> {payload_name} &nbsp; <strong>ID:</strong> {payload_id}</p>\n"
+    output = f"<h4>Created {friendly_type}</h4><br>"
+    output += f"<p><strong>Name:</strong> {payload_name} &nbsp; <strong>ID:</strong> {payload_id}</p><br>"
 
     if placeholder_list:
-        output += f"<p>I need {len(placeholder_list)} more detail(s):</p>\n"
-        output += "<ul>\n"
+        output += f"<p>I need {len(placeholder_list)} more detail(s):</p><br>"
+        output += "<ul><br>"
 
         for field in placeholder_list:
             question = _get_placeholder_question(field, api_type)
-            output += f"  <li>{question}</li>\n"
+            output += f"  <li>{question}</li><br>"
 
-        output += "</ul>\n"
+        output += "</ul><br>"
     else:
-        output += "<p>All required fields are set. Ready to execute.</p>\n"
+        output += "<p>All required fields are set. Ready to execute.</p><br>"
 
     return output

@@ -594,9 +594,9 @@ def create_payload(
             "Name", complete_payload.get("name", "unnamed")
         )
 
-        output = f"<h4>Created {friendly_type}</h4>\n"
-        output += f"<p><strong>Name:</strong> {payload_name} &nbsp; <strong>ID:</strong> {new_payload['payload_id']}</p>\n"
-        output += "<p>All required fields are set. Ready to execute.</p>\n"
+        output = f"<h4>Created {friendly_type}</h4><br>"
+        output += f"<p><strong>Name:</strong> {payload_name} &nbsp; <strong>ID:</strong> {new_payload['payload_id']}</p><br>"
+        output += "<p>All required fields are set. Ready to execute.</p><br>"
 
         return output
 
@@ -1154,11 +1154,141 @@ def _normalize_charge_model(model: str) -> str:
     return CHARGE_MODEL_MAPPING.get(normalized, model)
 
 
+def _validate_tier_boundaries(tiers: List[Dict[str, Any]]) -> List[str]:
+    """
+    Validate tier boundaries for gaps and overlaps.
+
+    Checks that tier boundaries are contiguous (no gaps or overlaps).
+    For tiered/volume pricing to work correctly, each tier should start
+    exactly where the previous tier ended + 1.
+
+    Args:
+        tiers: List of normalized tier dictionaries with StartingUnit/EndingUnit
+
+    Returns:
+        List of warning messages (empty if no issues found)
+    """
+    warnings = []
+
+    for i in range(1, len(tiers)):
+        prev_tier = tiers[i - 1]
+        curr_tier = tiers[i]
+
+        prev_ending = prev_tier.get("EndingUnit")
+        curr_starting = curr_tier.get("StartingUnit")
+
+        if prev_ending is None:
+            # Previous tier is unlimited - no subsequent tiers should exist
+            warnings.append(
+                f"Tier {i} has no EndingUnit (unlimited), but Tier {i + 1} exists. "
+                f"Units after {prev_tier.get('StartingUnit', 0)} will be priced by Tier {i}, not Tier {i + 1}."
+            )
+        elif curr_starting is not None:
+            expected_start = prev_ending + 1
+            if curr_starting < expected_start:
+                # Overlap
+                warnings.append(
+                    f"Tier overlap: Tier {i + 1} starts at {curr_starting} but Tier {i} ends at {prev_ending}. "
+                    f"Units {curr_starting}-{prev_ending} have overlapping pricing."
+                )
+            elif curr_starting > expected_start:
+                # Gap
+                warnings.append(
+                    f"Tier gap: No pricing for units {expected_start}-{curr_starting - 1} "
+                    f"(between Tier {i} ending at {prev_ending} and Tier {i + 1} starting at {curr_starting})."
+                )
+
+    return warnings
+
+
+def _normalize_tiers(
+    tiers: List[Dict[str, Any]],
+    currency: str = "USD",
+    default_price_format: str = "Per Unit",
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """
+    Normalize tier input to Zuora API format and validate tier structure.
+
+    Supports two input formats:
+    1. Simplified: [{"units": 1000, "price": 0.10}, {"units": 10000, "price": 0.08}, {"price": 0.05}]
+       - "units" = EndingUnit for that tier
+       - StartingUnit is auto-calculated (0 for first tier, prev_ending+1 for rest)
+       - Omitting "units" or setting it to None means unlimited (last tier)
+
+    2. Explicit: [{"StartingUnit": 0, "EndingUnit": 1000, "Price": 0.10}, ...]
+       - Full control over tier boundaries
+       - Missing StartingUnit is auto-calculated
+
+    Args:
+        tiers: List of tier dictionaries (simplified or explicit format)
+        currency: Default currency code (default: USD)
+        default_price_format: Default price format (default: "Per Unit")
+
+    Returns:
+        Tuple of (normalized_tiers, warnings)
+        - normalized_tiers: List of tier dicts in Zuora API format
+        - warnings: List of validation warning messages
+    """
+    if not tiers:
+        return [], []
+
+    normalized = []
+    warnings = []
+    prev_ending = None
+
+    for i, tier in enumerate(tiers):
+        # Determine price (support both "Price" and "price" keys)
+        tier_price = tier.get("Price", tier.get("price", 0))
+
+        # Determine StartingUnit and EndingUnit
+        if "units" in tier:
+            # Simplified format: {"units": 1000, "price": 0.10}
+            starting = (
+                0 if i == 0 else (prev_ending + 1 if prev_ending is not None else 0)
+            )
+            ending = tier.get("units")  # None means unlimited
+        else:
+            # Explicit format: {"StartingUnit": 0, "EndingUnit": 1000, "Price": 0.10}
+            if "StartingUnit" in tier:
+                starting = tier["StartingUnit"]
+            else:
+                # Auto-calculate: 0 for first tier, prev_ending + 1 for subsequent
+                starting = (
+                    0 if i == 0 else (prev_ending + 1 if prev_ending is not None else 0)
+                )
+
+            ending = tier.get("EndingUnit")  # None means unlimited
+
+        # Build normalized tier entry with ALL required fields
+        tier_entry = {
+            "Currency": tier.get("Currency", currency),
+            "Price": tier_price,
+            "Tier": tier.get("Tier", i + 1),
+            "StartingUnit": starting,
+            "PriceFormat": tier.get("PriceFormat", default_price_format),
+        }
+
+        # Only include EndingUnit if it's not the unlimited tier
+        if ending is not None:
+            tier_entry["EndingUnit"] = ending
+
+        normalized.append(tier_entry)
+        prev_ending = ending
+
+    # Validate tier boundaries (gaps/overlaps)
+    boundary_warnings = _validate_tier_boundaries(normalized)
+    warnings.extend(boundary_warnings)
+
+    return normalized, warnings
+
+
 def _infer_charge_model_conservative(
     charge_type: Optional[str],
     price: Optional[float],
     uom: Optional[str],
     name: Optional[str] = None,
+    tiers: Optional[List[Dict[str, Any]]] = None,
+    included_units: Optional[float] = None,
 ) -> Optional[str]:
     """
     Conservatively infer charge model from context.
@@ -1166,18 +1296,32 @@ def _infer_charge_model_conservative(
     Only infers when the context is very clear and unambiguous.
     Returns None if inference is not confident enough.
 
-    Rules (conservative):
-    1. If UOM is provided AND charge_type is Usage → Per Unit Pricing
-    2. If price is provided AND NO UOM AND charge_type is Recurring/OneTime → Flat Fee Pricing
+    Rules (in order of priority):
+    1. If multiple tiers provided → Tiered Pricing
+    2. If included_units AND tiers → Tiered with Overage Pricing
+    3. If included_units (no tiers) → Overage Pricing
+    4. If UOM is provided AND charge_type is Usage (no tiers) → Per Unit Pricing
+    5. If price is provided AND NO UOM AND charge_type is Recurring/OneTime → Flat Fee Pricing
 
     Does NOT infer in ambiguous cases - returns None so a placeholder is created.
     """
-    # Rule 1: Usage charge with UOM → Per Unit Pricing
+    # Rule 1: If multiple tiers provided → Tiered Pricing
+    if tiers and len(tiers) > 1:
+        if included_units is not None:
+            # Rule 2: Tiers + included_units → Tiered with Overage Pricing
+            return "Tiered with Overage Pricing"
+        return "Tiered Pricing"
+
+    # Rule 3: If included_units provided (no tiers or single tier) → Overage Pricing
+    if included_units is not None and (not tiers or len(tiers) <= 1):
+        return "Overage Pricing"
+
+    # Rule 4: Usage charge with UOM (and no tiers) → Per Unit Pricing
     # This is a very clear signal - usage charges with a unit of measure are per-unit
-    if charge_type == "Usage" and uom:
+    if charge_type == "Usage" and uom and not tiers:
         return "Per Unit Pricing"
 
-    # Rule 2: Recurring/OneTime with price but NO UOM → Flat Fee Pricing
+    # Rule 5: Recurring/OneTime with price but NO UOM → Flat Fee Pricing
     # A fixed price without a unit of measure strongly suggests flat fee
     if charge_type in ("Recurring", "OneTime") and price is not None and not uom:
         return "Flat Fee Pricing"
@@ -1196,6 +1340,8 @@ def create_charge(
     charge_model: Optional[str] = None,
     price: Optional[float] = None,
     tiers: Optional[List[Dict[str, Any]]] = None,
+    included_units: Optional[float] = None,
+    overage_price: Optional[float] = None,
     billing_period: Optional[
         Literal["Month", "Quarter", "Annual", "Semi-Annual", "Week", "Specific Months"]
     ] = None,
@@ -1242,19 +1388,35 @@ def create_charge(
     - Currency: USD
     - RatingGroup: ByBillingPeriod for tiered/volume Usage charges
 
+    Pricing Models Supported:
+    - Flat Fee Pricing: Single flat price (use 'price' parameter)
+    - Per Unit Pricing: Price per unit (use 'price' parameter)
+    - Tiered Pricing: Graduated pricing - each tier has its own rate (use 'tiers' parameter)
+    - Volume Pricing: All-units pricing - entire qty priced at one tier's rate (use 'tiers' parameter)
+    - Overage Pricing: X units included, then $Y per unit (use 'included_units' + 'overage_price')
+    - Tiered with Overage: Tiered pricing + overage (use 'tiers' + 'included_units' + 'overage_price')
+
     Args:
         rate_plan_id: Zuora rate plan ID OR object reference (e.g., '@{ProductRatePlan[0].Id}')
         rate_plan_index: Index of rate plan in current batch (0-based) to auto-generate object reference
         name: Charge name
         charge_type: OneTime, Recurring, or Usage
         charge_model: Pricing model (accepts simplified names like 'FlatFee' or full names like 'Flat Fee Pricing')
-        price: Price amount (for single-tier pricing: Flat Fee, Per Unit)
-        tiers: List of pricing tiers for Tiered/Volume pricing. Each tier dict should have:
+        price: Price amount (for single-tier pricing: Flat Fee, Per Unit, or overage rate)
+        tiers: List of pricing tiers for Tiered/Volume pricing. Supports two formats:
+               Explicit format (full control):
                - Price (required): Price for this tier
-               - StartingUnit: Unit where tier starts (default: 0 for first tier)
+               - StartingUnit: Unit where tier starts (default: 0 for first tier, auto-calculated for rest)
                - EndingUnit: Unit where tier ends (omit for unlimited/last tier)
                - PriceFormat: "Per Unit" or "Flat Fee" (default: "Per Unit")
                - Currency: Override currency for this tier (default: uses charge currency)
+               Simplified format (auto-calculates boundaries):
+               - units: EndingUnit for this tier (omit or None for unlimited)
+               - price: Price for this tier
+        included_units: Number of units included before overage pricing kicks in.
+                       Used with Overage Pricing and Tiered with Overage Pricing.
+        overage_price: Price per unit after included units are consumed.
+                      Used with Overage Pricing and Tiered with Overage Pricing.
         billing_period: Month, Quarter, Annual, etc.
         billing_timing: In Advance or In Arrears (defaults to In Arrears for Usage, In Advance otherwise)
         bill_cycle_type: When to bill
@@ -1269,30 +1431,70 @@ def create_charge(
         # Flat Fee Pricing (single price)
         create_charge(name="Monthly Fee", charge_type="Recurring", charge_model="Flat Fee Pricing", price=99.00)
 
-        # Tiered Pricing (multiple tiers based on quantity)
+        # Per Unit Pricing
+        create_charge(name="API Calls", charge_type="Usage", charge_model="Per Unit Pricing", price=0.01, uom="Calls")
+
+        # Tiered Pricing - Explicit format (full control over boundaries)
         create_charge(
             name="API Calls",
             charge_type="Usage",
             charge_model="Tiered Pricing",
             uom="Calls",
             tiers=[
-                {"StartingUnit": 0, "EndingUnit": 1000, "Price": 0.10},
-                {"StartingUnit": 1001, "EndingUnit": 10000, "Price": 0.08},
-                {"StartingUnit": 10001, "Price": 0.05},  # No EndingUnit = unlimited
+                {"StartingUnit": 0, "EndingUnit": 1000, "Price": 0.10, "PriceFormat": "Per Unit"},
+                {"StartingUnit": 1001, "EndingUnit": 10000, "Price": 0.08, "PriceFormat": "Per Unit"},
+                {"StartingUnit": 10001, "Price": 0.05, "PriceFormat": "Per Unit"},  # No EndingUnit = unlimited
             ]
         )
 
-        # Volume Pricing (single price based on total volume)
+        # Tiered Pricing - Simplified format (auto-calculates boundaries)
+        create_charge(
+            name="API Calls",
+            charge_type="Usage",
+            charge_model="Tiered Pricing",
+            uom="Calls",
+            tiers=[
+                {"units": 1000, "price": 0.10},   # 0-1000 @ $0.10/unit
+                {"units": 10000, "price": 0.08},  # 1001-10000 @ $0.08/unit
+                {"price": 0.05},                   # 10001+ @ $0.05/unit (unlimited)
+            ]
+        )
+
+        # Volume Pricing (entire quantity priced at one tier's rate)
         create_charge(
             name="Storage",
             charge_type="Usage",
             charge_model="Volume Pricing",
             uom="GB",
             tiers=[
-                {"StartingUnit": 0, "EndingUnit": 100, "Price": 1.00},
-                {"StartingUnit": 101, "EndingUnit": 1000, "Price": 0.80},
-                {"StartingUnit": 1001, "Price": 0.50},
+                {"units": 100, "price": 1.00},
+                {"units": 1000, "price": 0.80},
+                {"price": 0.50},
             ]
+        )
+
+        # Overage Pricing (X units included, then $Y per unit after)
+        create_charge(
+            name="API Usage",
+            charge_type="Usage",
+            charge_model="Overage Pricing",
+            uom="Calls",
+            included_units=10000,   # 10,000 calls included
+            overage_price=0.003,    # $0.003 per call after included units
+        )
+
+        # Tiered with Overage Pricing (tiered pricing + overage after all tiers)
+        create_charge(
+            name="Data Transfer",
+            charge_type="Usage",
+            charge_model="Tiered with Overage Pricing",
+            uom="GB",
+            included_units=100,     # 100 GB included in base
+            tiers=[
+                {"units": 500, "price": 0.10},   # 0-500 GB @ $0.10/GB
+                {"units": 1000, "price": 0.08},  # 501-1000 GB @ $0.08/GB
+            ],
+            overage_price=0.05,     # $0.05/GB after 1000 GB
         )
     """
     # Build charge payload with provided values - use PascalCase for Zuora v1 CRUD API
@@ -1335,6 +1537,8 @@ def create_charge(
             price=price,
             uom=uom,
             name=name,
+            tiers=tiers,
+            included_units=included_units,
         )
         if inferred_model:
             payload_data["ChargeModel"] = inferred_model
@@ -1373,59 +1577,112 @@ def create_charge(
             )
         payload_data["UOM"] = uom
 
-    # Determine if charge model is tiered/volume for RatingGroup logic
+    # Determine charge model type for special handling
     normalized_charge_model = payload_data.get("ChargeModel", "")
     is_tiered_or_volume = normalized_charge_model in (
         "Tiered Pricing",
         "Volume Pricing",
-        "Tiered with Overage Pricing",
     )
+    is_tiered_with_overage = normalized_charge_model == "Tiered with Overage Pricing"
+    is_overage = normalized_charge_model == "Overage Pricing"
 
     # RatingGroup - required for tiered/volume Usage charges to properly aggregate usage
     # Without this, Zuora may not display tiered pricing correctly
     if rating_group:
         payload_data["RatingGroup"] = rating_group
-    elif charge_type == "Usage" and is_tiered_or_volume:
-        # Auto-set RatingGroup for tiered/volume usage charges
+    elif charge_type == "Usage" and (
+        is_tiered_or_volume or is_tiered_with_overage or is_overage
+    ):
+        # Auto-set RatingGroup for tiered/volume/overage usage charges
         payload_data["RatingGroup"] = "ByBillingPeriod"
+
+    # Collect warnings (tier validation warnings will be added here)
+    warnings = []
+
+    # Handle IncludedUnits (for Overage and Tiered with Overage pricing)
+    if included_units is not None:
+        payload_data["IncludedUnits"] = included_units
 
     # Build ProductRatePlanChargeTierData (required per Zuora API)
     # This is the container for pricing information
     if tiers:
-        # Multiple tiers for Tiered/Volume pricing
-        tier_data = []
-        for i, tier in enumerate(tiers):
-            tier_entry = {
-                "Currency": tier.get("Currency", currency),
-                "Price": tier.get("Price", 0),
-                "Tier": tier.get("Tier", i + 1),
-            }
-            # StartingUnit/EndingUnit for tiered/volume pricing
-            if "StartingUnit" in tier:
-                tier_entry["StartingUnit"] = tier["StartingUnit"]
-            if "EndingUnit" in tier:
-                tier_entry["EndingUnit"] = tier["EndingUnit"]
-            # PriceFormat: "Per Unit" or "Flat Fee"
-            if "PriceFormat" in tier:
-                tier_entry["PriceFormat"] = tier["PriceFormat"]
-            tier_data.append(tier_entry)
+        # Tiered, Volume, or Tiered with Overage pricing
+        # Use _normalize_tiers to ensure all required fields are present
+        normalized_tiers, tier_warnings = _normalize_tiers(tiers, currency)
+        warnings.extend(tier_warnings)
+
+        # For Tiered with Overage, add an overage tier at the end if overage_price is provided
+        if is_tiered_with_overage and overage_price is not None:
+            last_tier_num = len(normalized_tiers)
+            last_ending = (
+                normalized_tiers[-1].get("EndingUnit") if normalized_tiers else None
+            )
+
+            # Calculate overage tier starting unit
+            if last_ending is not None:
+                overage_start = last_ending + 1
+            else:
+                # Last tier is already unlimited - warn user
+                warnings.append(
+                    "Last tier has no EndingUnit (unlimited). Overage tier will not be added. "
+                    "Set EndingUnit on the last tier to enable overage pricing after that tier."
+                )
+                overage_start = None
+
+            if overage_start is not None:
+                normalized_tiers.append(
+                    {
+                        "Currency": currency,
+                        "Price": overage_price,
+                        "Tier": last_tier_num + 1,
+                        "StartingUnit": overage_start,
+                        "PriceFormat": "Per Unit",
+                        # No EndingUnit = unlimited overage tier
+                    }
+                )
 
         payload_data["ProductRatePlanChargeTierData"] = {
-            "ProductRatePlanChargeTier": tier_data
+            "ProductRatePlanChargeTier": normalized_tiers
         }
+
+    elif is_overage:
+        # Pure Overage Pricing: included units + single overage tier
+        overage_tier_price = overage_price if overage_price is not None else price
+        if overage_tier_price is not None:
+            payload_data["ProductRatePlanChargeTierData"] = {
+                "ProductRatePlanChargeTier": [
+                    {
+                        "Currency": currency,
+                        "Price": overage_tier_price,
+                        "PriceFormat": "Per Unit",
+                        "StartingUnit": 0,
+                        "Tier": 1,
+                    }
+                ]
+            }
+        else:
+            warnings.append(
+                "Overage Pricing requires a price for overage units. "
+                "Please specify 'overage_price' or 'price' parameter."
+            )
+
     elif price is not None:
         # Single tier for Flat Fee/Per Unit pricing
+        # Determine PriceFormat based on charge model
+        price_format = (
+            "Flat Fee" if normalized_charge_model == "Flat Fee Pricing" else "Per Unit"
+        )
         payload_data["ProductRatePlanChargeTierData"] = {
             "ProductRatePlanChargeTier": [
                 {
                     "Currency": currency,
                     "Price": price,
+                    "StartingUnit": 0,
+                    "PriceFormat": price_format,
+                    "Tier": 1,
                 }
             ]
         }
-
-    # Collect warnings for name validation
-    warnings = []
 
     if name:
         # Validate name length
