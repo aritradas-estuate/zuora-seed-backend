@@ -279,6 +279,184 @@ def test_update_payload_removes_placeholder():
         return None
 
 
+def test_update_payload_case_insensitive():
+    """Test that updating with snake_case key updates the PascalCase field.
+
+    Bug fix verification: When agent calls update_payload with field_path='billing_period',
+    it should update the existing 'BillingPeriod' field, not create a new 'billing_period' key.
+    """
+    print("\n🧪 Test 6: Case-Insensitive Field Update (snake_case -> PascalCase)")
+
+    # First, create a product and rate plan so we can create a charge
+    request1 = {
+        "persona": "ProductManager",
+        "message": "Create a product 'Test Product' with a rate plan 'Test Plan' and a usage charge 'API Calls' with tiered pricing",
+        "conversation_id": "test-case-insensitive-001",
+    }
+
+    try:
+        response1 = invoke(request1)
+        print_response("Step 1: Create product with charge", response1)
+
+        payloads = response1.get("zuora_api_payloads", [])
+
+        # Find charge payload that has BillingPeriod placeholder
+        charge_payload = None
+        charge_index = None
+        for i, p in enumerate(payloads):
+            if p.get("zuora_api_type") == "charge_create":
+                data = p.get("payload", {})
+                placeholders = p.get("_placeholders", [])
+                # Check if BillingPeriod is a placeholder
+                if "BillingPeriod" in placeholders or "<<PLACEHOLDER" in str(
+                    data.get("BillingPeriod", "")
+                ):
+                    charge_payload = p
+                    charge_index = i
+                    break
+
+        if not charge_payload:
+            print(
+                "\n⚠️ Skipped: No charge with BillingPeriod placeholder found (smart default may have applied)"
+            )
+            return response1
+
+        print(
+            f"\nFound charge payload at index {charge_index} with BillingPeriod placeholder"
+        )
+
+        # Now update using snake_case field name (simulating what the LLM might do)
+        request2 = {
+            "persona": "ProductManager",
+            "message": "Set the billing_period to 'Month' for the API Calls charge",
+            "conversation_id": "test-case-insensitive-001",
+            "zuora_api_payloads": payloads,
+        }
+
+        response2 = invoke(request2)
+        print_response("Step 2: Update with snake_case 'billing_period'", response2)
+
+        updated_payloads = response2.get("zuora_api_payloads", [])
+
+        # Find the updated charge payload
+        updated_charge = None
+        for p in updated_payloads:
+            if p.get("zuora_api_type") == "charge_create":
+                if p.get("payload", {}).get("Name") == "API Calls":
+                    updated_charge = p
+                    break
+
+        if not updated_charge:
+            print("\n❌ Test failed: Could not find updated charge payload")
+            return None
+
+        updated_data = updated_charge.get("payload", {})
+        updated_placeholders = updated_charge.get("_placeholders", [])
+
+        # Verification 1: BillingPeriod should be "Month"
+        billing_period_value = updated_data.get("BillingPeriod")
+        assert billing_period_value == "Month", (
+            f"BillingPeriod should be 'Month', got: {billing_period_value}"
+        )
+
+        # Verification 2: billing_period (snake_case) should NOT exist
+        assert "billing_period" not in updated_data, (
+            "Should NOT have snake_case 'billing_period' key - should use existing 'BillingPeriod'"
+        )
+
+        # Verification 3: BillingPeriod should be removed from placeholders
+        assert "BillingPeriod" not in updated_placeholders, (
+            "BillingPeriod should be removed from _placeholders list"
+        )
+
+        print("\n✅ Test passed: Case-insensitive update worked correctly")
+        print(f"   - BillingPeriod = '{billing_period_value}'")
+        print("   - No duplicate 'billing_period' key")
+        print("   - Placeholder removed")
+
+        return response2
+
+    except AssertionError as e:
+        print(f"\n❌ Test failed: {e}")
+        return None
+    except Exception as e:
+        print(f"\n❌ Test error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return None
+
+
+def test_update_payload_by_name():
+    """Test that update_payload can find payloads by name (fuzzy match).
+
+    When there are multiple charge payloads, payload_name should find the right one
+    using case-insensitive substring matching.
+    """
+    print("\n🧪 Test 7: Update Payload by Name (Fuzzy Match)")
+
+    # Create a product with two charges
+    request1 = {
+        "persona": "ProductManager",
+        "message": "Create a product 'Test Product' with a rate plan and two charges: 'Monthly Base Fee' (flat $49) and 'API Calls Usage' (usage-based tiered pricing)",
+        "conversation_id": "test-payload-name-001",
+    }
+
+    try:
+        response1 = invoke(request1)
+        print_response("Step 1: Create product with two charges", response1)
+
+        payloads = response1.get("zuora_api_payloads", [])
+
+        # Count charge payloads
+        charge_payloads = [
+            p for p in payloads if p.get("zuora_api_type") == "charge_create"
+        ]
+        print(f"\nFound {len(charge_payloads)} charge payload(s)")
+
+        if len(charge_payloads) < 2:
+            print("\n⚠️ Skipped: Need at least 2 charges to test fuzzy matching")
+            return response1
+
+        # Now update one charge by name (partial match)
+        request2 = {
+            "persona": "ProductManager",
+            "message": "Set the billing period to 'Month' for the API Calls charge",
+            "conversation_id": "test-payload-name-001",
+            "zuora_api_payloads": payloads,
+        }
+
+        response2 = invoke(request2)
+        print_response("Step 2: Update by name 'API Calls'", response2)
+
+        # Verify it worked on first try (no "issue with identifying" message)
+        answer = response2.get("answer", "")
+        if "issue with identifying" in answer.lower():
+            print(
+                "\n❌ Test failed: Agent had identification issue (should use payload_name)"
+            )
+            return None
+
+        if "multiple" in answer.lower() and "specify" in answer.lower():
+            print(
+                "\n❌ Test failed: Agent didn't use payload_name to specify which charge"
+            )
+            return None
+
+        print("\n✅ Test passed: payload_name fuzzy matching works")
+        return response2
+
+    except AssertionError as e:
+        print(f"\n❌ Test failed: {e}")
+        return None
+    except Exception as e:
+        print(f"\n❌ Test error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return None
+
+
 def run_all_tests():
     """Run all placeholder tests."""
     print("\n" + "=" * 70)
@@ -291,6 +469,8 @@ def run_all_tests():
         ("Partial Rate Plan", test_partial_rate_plan_creation),
         ("Partial Charge", test_partial_charge_creation),
         ("Update Removes Placeholder", test_update_payload_removes_placeholder),
+        ("Case-Insensitive Update", test_update_payload_case_insensitive),
+        ("Update by Name (Fuzzy)", test_update_payload_by_name),
     ]
 
     results = []

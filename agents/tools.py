@@ -30,6 +30,66 @@ from .validation_utils import (
 )
 
 
+def _find_existing_key(obj: Dict[str, Any], key: str) -> Optional[str]:
+    """
+    Find an existing key in a dict that matches case-insensitively.
+
+    Zuora API uses PascalCase (e.g., BillingPeriod). This function finds the
+    existing key even if the input uses snake_case (billing_period) or other variations.
+
+    Args:
+        obj: Dictionary to search
+        key: Key to find (any casing)
+
+    Returns:
+        The actual existing key if found, None otherwise
+    """
+    if key in obj:
+        return key  # Exact match
+
+    # Normalize: lowercase and remove underscores
+    key_normalized = key.lower().replace("_", "")
+
+    for existing_key in obj.keys():
+        existing_normalized = existing_key.lower().replace("_", "")
+        if existing_normalized == key_normalized:
+            return existing_key
+
+    return None
+
+
+def _find_payload_by_name(
+    matching: List[Tuple[int, Dict[str, Any]]], name: str
+) -> Tuple[Optional[Tuple[int, Dict[str, Any]]], List[str]]:
+    """
+    Find a payload by name using case-insensitive substring matching.
+
+    Args:
+        matching: List of (index, payload) tuples to search
+        name: Name to search for (case-insensitive substring match)
+
+    Returns:
+        Tuple of:
+        - (index, payload) if exactly one match found, None otherwise
+        - List of all matching names (for error messages)
+    """
+    name_lower = name.lower()
+    matches = []
+
+    for idx, p in matching:
+        payload_name = p.get("payload", {}).get("Name") or p.get("payload", {}).get(
+            "name", ""
+        )
+        if payload_name and name_lower in payload_name.lower():
+            matches.append((idx, p, payload_name))
+
+    if len(matches) == 1:
+        idx, p, _ = matches[0]
+        return ((idx, p), [m[2] for m in matches])
+    else:
+        return (None, [m[2] for m in matches])
+
+
 # Wrapper functions that return just booleans for backward compatibility
 def validate_date_format(date_str: str) -> bool:
     """Validate date is in YYYY-MM-DD format. Returns True if valid."""
@@ -183,20 +243,47 @@ def get_payloads(tool_context: ToolContext, api_type: Optional[str] = None) -> s
     if not payloads:
         return f"No payloads found" + (f" for type '{api_type}'" if api_type else "")
 
-    # Check if any payloads have placeholders
+    # Build human-readable table summary
+    output = f"**Payloads ({len(payloads)} total):**\n\n"
+    output += "| # | Type | Name | ID | Status |\n"
+    output += "|---|------|------|----|---------|\n"
+
+    for i, p in enumerate(payloads, 1):
+        # Make type human-friendly (e.g., "charge_create" -> "Charge")
+        raw_type = p.get("zuora_api_type", "unknown")
+        friendly_type = (
+            raw_type.replace("_create", "")
+            .replace("_update", "")
+            .replace("_", " ")
+            .title()
+        )
+
+        # Get name from payload
+        payload_data = p.get("payload", {})
+        name = payload_data.get("Name", payload_data.get("name", "unnamed"))
+
+        # Get payload ID
+        pid = p.get("payload_id", "?")
+
+        # Determine status
+        placeholders = p.get("_placeholders", [])
+        if placeholders:
+            # Show first 2 placeholders, then "etc."
+            placeholder_display = ", ".join(placeholders[:2])
+            if len(placeholders) > 2:
+                placeholder_display += f" (+{len(placeholders) - 2} more)"
+            status = f"Needs: {placeholder_display}"
+        else:
+            status = "Ready"
+
+        output += f"| {i} | {friendly_type} | {name} | {pid} | {status} |\n"
+
+    # Summary of items needing attention
     payloads_with_placeholders = [p for p in payloads if p.get("_placeholders")]
-
-    output = json.dumps(payloads, indent=2)
-
     if payloads_with_placeholders:
-        output += "\n\n⚠️ **Warning:** "
-        output += f"{len(payloads_with_placeholders)} payload(s) contain <<PLACEHOLDER>> values.\n"
-        output += "Use `update_payload()` to replace them before API execution.\n"
-        output += "Placeholder fields:\n"
-        for p in payloads_with_placeholders:
-            payload_id = p.get("payload_id", "unknown")
-            placeholders = p.get("_placeholders", [])
-            output += f"  - Payload {payload_id}: {', '.join(placeholders)}\n"
+        output += f"\n{len(payloads_with_placeholders)} payload(s) need more details before execution."
+    else:
+        output += "\nAll payloads ready for execution."
 
     return output
 
@@ -208,15 +295,19 @@ def update_payload(
     field_path: str,
     new_value: Any,
     payload_id: Optional[str] = None,
+    payload_name: Optional[str] = None,
     payload_index: Optional[int] = None,
 ) -> str:
-    """Update field in payload. Identify by payload_id (preferred) or payload_index.
+    """Update field in payload. Identify by payload_id, payload_name, or payload_index.
+
+    Priority order: payload_id > payload_name > payload_index
 
     Args:
         api_type: Payload type (e.g., 'charge_create', 'product_create')
         field_path: Dot notation path to field (e.g., 'includedUnits', 'pricing.0.price')
         new_value: New value to set
-        payload_id: Unique payload ID (preferred - from create response)
+        payload_id: Unique payload ID (from create response)
+        payload_name: Name of the payload (case-insensitive substring match, e.g., 'API Calls' matches 'API Calls Usage')
         payload_index: Index among payloads of same type (0=first, 1=second)
     """
     payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
@@ -256,6 +347,41 @@ def update_payload(
             error_msg += f"<p><em>Try:</em> <code>update_payload(api_type='{api_type}', payload_id='CORRECT_ID', ...)</code></p>"
             return error_msg
 
+    elif payload_name:
+        # Find by name (case-insensitive substring match)
+        result, matched_names = _find_payload_by_name(matching, payload_name)
+
+        if result:
+            target_idx, target_entry = result
+            matched_name = target_entry.get("payload", {}).get(
+                "Name"
+            ) or target_entry.get("payload", {}).get("name", "")
+            # Log only when match is not exact
+            if matched_name.lower() != payload_name.lower():
+                logger.info(f"Fuzzy name match: '{payload_name}' -> '{matched_name}'")
+        elif len(matched_names) > 1:
+            # Multiple payloads match - ambiguous, fail with helpful error
+            error_msg = f"<p>❌ <strong>Error:</strong> Multiple <code>{api_type}</code> payloads match '<code>{payload_name}</code>'.</p>"
+            error_msg += f"<p><strong>Matching payloads:</strong></p><ul>"
+            for name in matched_names:
+                error_msg += f"<li><strong>{name}</strong></li>"
+            error_msg += "</ul>"
+            error_msg += (
+                f"<p><em>Be more specific:</em> Use a more unique part of the name.</p>"
+            )
+            return error_msg
+        else:
+            # No match found
+            error_msg = f"<p>❌ <strong>Error:</strong> No <code>{api_type}</code> payload found with name containing '<code>{payload_name}</code>'.</p>"
+            error_msg += f"<p><strong>Available {api_type} payloads:</strong></p><ul>"
+            for _, p in matching:
+                pname = p.get("payload", {}).get("Name") or p.get("payload", {}).get(
+                    "name", "unnamed"
+                )
+                error_msg += f"<li><strong>{pname}</strong></li>"
+            error_msg += "</ul>"
+            return error_msg
+
     elif payload_index is not None:
         # Find by index
         if payload_index >= len(matching):
@@ -282,12 +408,16 @@ def update_payload(
             error_msg = f"<p>❌ <strong>Error:</strong> Multiple <code>{api_type}</code> payloads found. Please specify which one to update.</p>"
             error_msg += f"<p><strong>Found {len(matching)} {api_type} payload(s):</strong></p><ul>"
             for i, (_, p) in enumerate(matching):
-                pid = p.get("payload_id", "?")
-                name = p.get("payload", {}).get("name", "unnamed")
-                error_msg += f"<li><code>payload_id='{pid}'</code> OR <code>payload_index={i}</code> (name: {name})</li>"
+                pname = p.get("payload", {}).get("Name") or p.get("payload", {}).get(
+                    "name", "unnamed"
+                )
+                error_msg += f"<li><strong>{pname}</strong> (index: {i})</li>"
             error_msg += "</ul>"
-            error_msg += f"<p><strong>Use payload_id (preferred):</strong></p>"
-            error_msg += f"<pre><code>update_payload(api_type='{api_type}', payload_id='ID', field_path='{field_path}', new_value={repr(new_value)})</code></pre>"
+            error_msg += f"<p><strong>Use payload_name (recommended):</strong></p>"
+            first_name = matching[0][1].get("payload", {}).get("Name") or matching[0][
+                1
+            ].get("payload", {}).get("name", "NAME")
+            error_msg += f"<pre><code>update_payload(api_type='{api_type}', payload_name='{first_name}', field_path='{field_path}', new_value={repr(new_value)})</code></pre>"
             return error_msg
 
     payload_entry = target_entry
@@ -335,25 +465,35 @@ def update_payload(
             except json.JSONDecodeError:
                 pass  # Keep as string if not valid JSON
 
-    # Set the value
+    # Set the value - use existing key if one matches (case-insensitive)
+    # This ensures we update BillingPeriod when field_path is "billing_period"
     if final_key.isdigit():
         current[int(final_key)] = new_value
+        actual_key = final_key
     else:
-        current[final_key] = new_value
+        existing_key = _find_existing_key(current, final_key)
+        if existing_key and existing_key != final_key:
+            logger.info(f"Normalized field key: '{final_key}' -> '{existing_key}'")
+        actual_key = existing_key if existing_key else final_key
+        current[actual_key] = new_value
 
     # Remove from placeholder list if this field was a placeholder
     if "_placeholders" in payload_entry:
-        # Try to match field path (case-insensitive, flexible matching)
         placeholders = payload_entry["_placeholders"]
-        # Try exact match first
-        if field_path in placeholders:
-            placeholders.remove(field_path)
-        else:
-            # Try case-insensitive match
-            for ph in list(placeholders):
-                if ph.lower() == field_path.lower() or ph.lower() == final_key.lower():
-                    placeholders.remove(ph)
-                    break
+
+        # Build set of normalized keys to match against (field_path, final_key, actual_key)
+        keys_to_match = {
+            field_path.lower().replace("_", ""),
+            final_key.lower().replace("_", ""),
+            actual_key.lower().replace("_", ""),
+        }
+
+        # Find and remove matching placeholder
+        for ph in list(placeholders):
+            ph_normalized = ph.lower().replace("_", "")
+            if ph_normalized in keys_to_match:
+                placeholders.remove(ph)
+                break
 
         # Remove the _placeholders key if empty
         if not placeholders:
@@ -362,17 +502,21 @@ def update_payload(
     # Update state
     tool_context.agent.state.set(PAYLOADS_STATE_KEY, payloads)
 
-    response = f"✅ Successfully updated '{field_path}' to '{new_value}' in {api_type} payload.\n\n"
+    # Get human-friendly type and name for response
+    friendly_type = (
+        api_type.replace("_create", "").replace("_update", "").replace("_", " ")
+    )
+    payload_name = payload.get("Name", payload.get("name", "unnamed"))
+
+    # Build concise response (no JSON) - show the actual key used, not the input field_path
+    response = f'Updated {actual_key} to "{new_value}" in {friendly_type} "{payload_name}".\n\n'
 
     # Show remaining placeholders if any
     if payload_entry.get("_placeholders"):
-        response += (
-            f"⚠️ Remaining placeholders: {', '.join(payload_entry['_placeholders'])}\n\n"
-        )
+        remaining = payload_entry["_placeholders"]
+        response += f"Still needs: {', '.join(remaining)}"
     else:
-        response += "✅ All placeholders resolved! Payload is ready for execution.\n\n"
-
-    response += f"Updated payload:\n{json.dumps(payloads[target_idx], indent=2)}"
+        response += "All fields complete - ready to execute."
 
     return response
 
@@ -439,28 +583,20 @@ def create_payload(
             api_type, placeholder_list, new_payload, current_index, same_type_count
         )
     else:
-        # Generate normal success output with reference documentation for nested objects
-        output = f"<h4>✅ Created {api_type} Payload</h4>\n"
-        output += f"<p><strong>Payload ID:</strong> <code>{new_payload['payload_id']}</code></p>\n"
-        output += f"<p><strong>Index:</strong> {current_index} (of {same_type_count} {api_type} payload{'s' if same_type_count > 1 else ''})</p>\n"
+        # Generate concise success output (no JSON)
+        friendly_type = (
+            api_type.replace("_create", "")
+            .replace("_update", "")
+            .replace("_", " ")
+            .title()
+        )
+        payload_name = complete_payload.get(
+            "Name", complete_payload.get("name", "unnamed")
+        )
 
-        # Add update hint if there are multiple payloads of same type
-        if same_type_count > 1:
-            output += f"<p><em>To update this payload:</em> <code>update_payload(api_type='{api_type}', payload_id='{new_payload['payload_id']}', field_path='...', new_value=...)</code></p>\n"
-
-        # Check if this is a nested payload with objects array
-        if "objects" in complete_payload:
-            ref_doc = format_payload_with_references(complete_payload["objects"])
-            output += ref_doc
-        # Check for nested rate plans in product payloads
-        elif api_type.lower() == "product" and (
-            "productRatePlans" in complete_payload
-            or "ProductRatePlans" in complete_payload
-        ):
-            ref_doc = generate_reference_documentation(complete_payload)
-            output += ref_doc
-
-        output += f"\n<pre><code>{json.dumps(new_payload, indent=2)}</code></pre>"
+        output = f"<h4>Created {friendly_type}</h4>\n"
+        output += f"<p><strong>Name:</strong> {payload_name} &nbsp; <strong>ID:</strong> {new_payload['payload_id']}</p>\n"
+        output += "<p>All required fields are set. Ready to execute.</p>\n"
 
         return output
 
@@ -682,7 +818,7 @@ def update_zuora_product(
     update_payload = {
         "payload": {
             "method": "PUT",
-            "endpoint": f"/v1/catalog/products/{product_id}",
+            "endpoint": f"/v1/object/product/{product_id}",
             "body": {attribute: new_value},
         },
         "zuora_api_type": "product_update",
@@ -694,7 +830,7 @@ def update_zuora_product(
 
     return f"""Generated product update payload:
 
-**Endpoint:** PUT /v1/catalog/products/{product_id}
+**Endpoint:** PUT /v1/object/product/{product_id}
 **Body:** {{"{attribute}": "{new_value}"}}
 
 This payload has been added to the response. Execute it via the Zuora API to apply the update.
@@ -715,7 +851,7 @@ def update_zuora_rate_plan(
     update_payload = {
         "payload": {
             "method": "PUT",
-            "endpoint": f"/v1/catalog/product-rate-plans/{rate_plan_id}",
+            "endpoint": f"/v1/object/product-rate-plan/{rate_plan_id}",
             "body": {attribute: new_value},
         },
         "zuora_api_type": "rate_plan_update",
@@ -727,7 +863,7 @@ def update_zuora_rate_plan(
 
     return f"""Generated rate plan update payload:
 
-**Endpoint:** PUT /v1/catalog/product-rate-plans/{rate_plan_id}
+**Endpoint:** PUT /v1/object/product-rate-plan/{rate_plan_id}
 **Body:** {{"{attribute}": "{new_value}"}}
 
 This payload has been added to the response. Execute it via the Zuora API to apply the update.
@@ -755,7 +891,7 @@ Charge Model and Charge Type cannot be changed if this charge is used in any exi
     update_payload = {
         "payload": {
             "method": "PUT",
-            "endpoint": f"/v1/catalog/product-rate-plan-charges/{charge_id}",
+            "endpoint": f"/v1/object/product-rate-plan-charge/{charge_id}",
             "body": {attribute: new_value},
         },
         "zuora_api_type": "charge_update",
@@ -767,7 +903,7 @@ Charge Model and Charge Type cannot be changed if this charge is used in any exi
 
     return f"""Generated charge update payload:
 
-**Endpoint:** PUT /v1/catalog/product-rate-plan-charges/{charge_id}
+**Endpoint:** PUT /v1/object/product-rate-plan-charge/{charge_id}
 **Body:** {{"{attribute}": {json.dumps(new_value)}}}
 
 This payload has been added to the response. Execute it via the Zuora API to apply the update.
@@ -1487,7 +1623,7 @@ When prepaid balance is depleted, you have options:
 - [ ] Create Rate Plan: {rate_plan_name}
 - [ ] Add Prepaid Charge with configuration above
 - [ ] Add Drawdown Charge linked to prepaid
-{"- [ ] Create Account custom field: " + account_field_name if use_field_lookup_for_topup else ""}
+{"- [ ] Create Account custom field: " + account_field_name if use_field_lookup_for_topup and account_field_name else ""}
 {"- [ ] Set up notification rule for usage events" if enable_auto_topup else ""}
 {"- [ ] Create auto top-up workflow" if enable_auto_topup else ""}
 - [ ] Test with sample subscription
@@ -1546,7 +1682,7 @@ def generate_workflow_config(
     Returns:
         Complete workflow configuration with implementation instructions.
     """
-    workflow_config = {
+    workflow_config: Dict[str, Any] = {
         "name": workflow_name,
         "description": description,
         "type": trigger_type,
@@ -2080,7 +2216,7 @@ This order uses `fieldLookup('{field_lookup_expression}')` for dynamic pricing.
 **Prerequisite:** Ensure the custom field exists on the Account object:
 ```json
 {{
-    "name": "{field_lookup_expression.split(".")[-1]}",
+    "name": "{field_lookup_expression.split(".")[-1] if field_lookup_expression else "FIELD_NAME"}",
     "label": "Dynamic Amount Field",
     "type": "Number"
 }}

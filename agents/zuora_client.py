@@ -69,7 +69,7 @@ class ZuoraClient:
         # Retry strategy: exponential backoff for transient failures
         retry_strategy = Retry(
             total=ZUORA_API_RETRY_ATTEMPTS,
-            backoff_factor=ZUORA_API_RETRY_BACKOFF_FACTOR,
+            backoff_factor=ZUORA_API_RETRY_BACKOFF_FACTOR,  # type: ignore[arg-type]
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["GET", "POST", "PUT"],
             raise_on_status=False,
@@ -379,7 +379,7 @@ class ZuoraClient:
             Updated product or error
         """
         result = self._request(
-            "PUT", f"/v1/catalog/products/{product_id}", data=updates, use_cache=False
+            "PUT", f"/v1/object/product/{product_id}", data=updates, use_cache=False
         )
 
         # Invalidate cache for this product and list
@@ -442,7 +442,7 @@ class ZuoraClient:
         """
         result = self._request(
             "PUT",
-            f"/v1/catalog/product-rate-plans/{rate_plan_id}",
+            f"/v1/object/product-rate-plan/{rate_plan_id}",
             data=updates,
             use_cache=False,
         )
@@ -512,7 +512,7 @@ class ZuoraClient:
         """
         result = self._request(
             "PUT",
-            f"/v1/catalog/product-rate-plan-charges/{charge_id}",
+            f"/v1/object/product-rate-plan-charge/{charge_id}",
             data=updates,
             use_cache=False,
         )

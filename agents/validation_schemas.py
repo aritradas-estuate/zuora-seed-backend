@@ -8,6 +8,75 @@ This module is extracted from tools.py for better organization and maintainabili
 from typing import Dict, Any, List, Tuple
 
 
+# ============ Human-Friendly Labels for Technical Zuora Values ============
+
+# Maps technical enum values to human-readable descriptions
+FRIENDLY_LABELS = {
+    # Billing Periods
+    "Specific_Months": "custom months",
+    "Specific Months": "custom months",
+    "Specific_Days": "custom days",
+    "Specific Days": "custom days",
+    "Specific_Weeks": "custom weeks",
+    "Specific Weeks": "custom weeks",
+    "Eighteen_Months": "18 months",
+    "Two_Years": "2 years",
+    "Three_Years": "3 years",
+    "Five_Years": "5 years",
+    "Annual": "yearly",
+    "Semi-Annual": "every 6 months",
+    "Quarter": "quarterly",
+    "Month": "monthly",
+    "Week": "weekly",
+    # Bill Cycle Types
+    "DefaultFromCustomer": "customer's billing day",
+    "SpecificDayofMonth": "specific day of month",
+    "SubscriptionStartDay": "subscription start day",
+    "ChargeTriggerDay": "charge trigger day",
+    # Charge Types
+    "OneTime": "one-time",
+    "Recurring": "recurring",
+    "Usage": "usage-based",
+    # Trigger Events
+    "ContractEffective": "contract start",
+    "ServiceActivation": "service activation",
+    "CustomerAcceptance": "customer acceptance",
+    # Charge Models
+    "Flat Fee Pricing": "flat fee",
+    "Per Unit Pricing": "per unit",
+    "Tiered Pricing": "tiered",
+    "Volume Pricing": "volume-based",
+    "Overage Pricing": "overage",
+    "Tiered with Overage Pricing": "tiered with overage",
+    "Discount-Fixed Amount": "fixed discount",
+    "Discount-Percentage": "percentage discount",
+}
+
+# Common defaults to suggest for each field type
+COMMON_DEFAULTS = {
+    "BillingPeriod": "monthly",
+    "BillCycleType": "customer's billing day",
+    "ChargeType": "recurring",
+    "TriggerEvent": "contract start",
+    "ChargeModel": "flat fee",
+    "Currency": "USD",
+}
+
+
+def get_friendly_label(value: str) -> str:
+    """Convert a technical Zuora value to a human-friendly label."""
+    return FRIENDLY_LABELS.get(value, value)
+
+
+def get_friendly_options(options: List[str], max_show: int = 5) -> str:
+    """Convert a list of technical options to human-friendly text."""
+    friendly = [get_friendly_label(opt) for opt in options[:max_show]]
+    result = ", ".join(friendly)
+    if len(options) > max_show:
+        result += f", etc."
+    return result
+
+
 # ============ Required Fields Schema ============
 
 REQUIRED_FIELDS = {
@@ -389,37 +458,34 @@ def _get_env_options(option_type: str) -> List[str]:
 def _get_placeholder_question(field_name: str, api_type: str) -> str:
     """
     Generate a natural language question for a placeholder field.
-    Uses environment settings when available to show actual options.
+    Uses environment settings when available and provides human-friendly options.
     """
     field_lower = field_name.lower()
 
     if field_lower == "chargemodel":
         models = _get_env_options("charge_models")
         if models:
-            # Show first 5 options to keep it concise
-            options = ", ".join(models[:5])
-            if len(models) > 5:
-                options += f", etc. ({len(models)} total)"
-            return f"What pricing model would you like for this charge? Available options: {options}"
-        return "What pricing model would you like? (e.g., Flat Fee Pricing, Per Unit Pricing, Tiered Pricing, Volume Pricing)"
+            friendly_options = get_friendly_options(models, max_show=4)
+            return f"What pricing model? (e.g., {friendly_options} - common: {COMMON_DEFAULTS.get('ChargeModel', 'flat fee')})"
+        return f"What pricing model? (e.g., flat fee, per unit, tiered, volume-based - common: {COMMON_DEFAULTS.get('ChargeModel', 'flat fee')})"
 
     elif field_lower == "billingperiod":
         periods = _get_env_options("billing_periods")
         if periods:
-            options = ", ".join(periods[:6])
-            if len(periods) > 6:
-                options += ", etc."
-            return f"What billing period should this charge use? Available options: {options}"
-        return "What billing period? (e.g., Month, Quarter, Annual, Week)"
+            friendly_options = get_friendly_options(periods, max_show=4)
+            return f"What billing period? (e.g., {friendly_options} - common: {COMMON_DEFAULTS.get('BillingPeriod', 'monthly')})"
+        return f"What billing period? (e.g., monthly, quarterly, yearly, weekly - common: {COMMON_DEFAULTS.get('BillingPeriod', 'monthly')})"
 
     elif field_lower == "billcycletype":
         types = _get_env_options("billing_cycle_types")
+        default_cycle = COMMON_DEFAULTS.get("BillCycleType", "customer's billing day")
         if types:
-            return f"What bill cycle type? Options: {', '.join(types)}"
-        return "What bill cycle type? (e.g., DefaultFromCustomer, SpecificDayofMonth, SubscriptionStartDay)"
+            friendly_options = get_friendly_options(types, max_show=4)
+            return f"What bill cycle type? (e.g., {friendly_options} - common: {default_cycle})"
+        return f"What bill cycle type? (e.g., customer's billing day, specific day of month, subscription start day - common: {default_cycle})"
 
     elif field_lower == "productrateplanchargertierdata":
-        return "What is the price for this charge? (e.g., $49.99)"
+        return "What is the price? (e.g., 49.99)"
 
     elif field_lower == "productrateplanid":
         return "Which rate plan should this charge belong to?"
@@ -428,32 +494,35 @@ def _get_placeholder_question(field_name: str, api_type: str) -> str:
         return "Which product should this rate plan belong to?"
 
     elif field_lower == "uom":
-        return "What unit of measure for this usage charge? (e.g., api_call, GB, user, transaction, message)"
+        return "What unit of measure? (e.g., API calls, GB, users, transactions)"
 
     elif field_lower == "name":
-        return f"What should this {api_type.replace('_', ' ')} be named?"
+        friendly_type = api_type.replace("_create", "").replace("_", " ")
+        return f"What should this {friendly_type} be named?"
 
     elif field_lower == "chargetype":
-        return "What type of charge? (Recurring, OneTime, or Usage)"
+        return f"What type of charge? (e.g., recurring, one-time, or usage-based - common: {COMMON_DEFAULTS.get('ChargeType', 'recurring')})"
 
     elif field_lower == "triggerevent":
-        return "When should billing start? (ContractEffective, ServiceActivation, or CustomerAcceptance)"
+        return f"When should billing start? (e.g., contract start, service activation, customer acceptance - common: {COMMON_DEFAULTS.get('TriggerEvent', 'contract start')})"
 
     elif field_lower in ("effectivestartdate", "effectiveenddate"):
-        return f"What date should be used for {field_name}? (format: YYYY-MM-DD)"
+        friendly_name = "start date" if "start" in field_lower else "end date"
+        return f"What {friendly_name}? (format: YYYY-MM-DD)"
 
     elif field_lower == "sku":
-        return "What SKU (product code) would you like?"
+        return "What SKU (product code)?"
 
     elif field_lower == "currency":
         currencies = _get_env_options("currencies")
         if currencies:
-            return f"What currency? Available: {', '.join(currencies[:5])}"
-        return "What currency? (e.g., USD, EUR, GBP)"
+            return f"What currency? (e.g., {', '.join(currencies[:3])} - common: USD)"
+        return "What currency? (e.g., USD, EUR, GBP - common: USD)"
 
     else:
-        # Generic fallback
-        return f"What value should '{field_name}' have?"
+        # Generic fallback - make field name readable
+        readable_name = field_name.replace("_", " ").replace("__c", "")
+        return f"What {readable_name}?"
 
 
 def format_placeholder_warning(
@@ -477,19 +546,23 @@ def format_placeholder_warning(
         total_count: Total number of payloads of this type
 
     Returns:
-        HTML-formatted message with clarifying questions
+        HTML-formatted message with clarifying questions (no JSON)
     """
-    import json
-
     payload_id = payload.get("payload_id", "N/A")
-    payload_name = payload.get("payload", {}).get("name", "unnamed")
+    payload_name = payload.get("payload", {}).get(
+        "Name", payload.get("payload", {}).get("name", "unnamed")
+    )
 
-    output = f"<h4>✅ Created {api_type} Payload</h4>\n"
-    output += f"<p><strong>Name:</strong> {payload_name}</p>\n"
-    output += f"<p><strong>Payload ID:</strong> <code>{payload_id}</code></p>\n"
+    # Make api_type human-friendly (e.g., "charge_create" -> "Charge")
+    friendly_type = (
+        api_type.replace("_create", "").replace("_update", "").replace("_", " ").title()
+    )
+
+    output = f"<h4>Created {friendly_type}</h4>\n"
+    output += f"<p><strong>Name:</strong> {payload_name} &nbsp; <strong>ID:</strong> {payload_id}</p>\n"
 
     if placeholder_list:
-        output += f"<p>I need <strong>{len(placeholder_list)}</strong> more detail(s) to complete this:</p>\n"
+        output += f"<p>I need {len(placeholder_list)} more detail(s):</p>\n"
         output += "<ul>\n"
 
         for field in placeholder_list:
@@ -497,18 +570,7 @@ def format_placeholder_warning(
             output += f"  <li>{question}</li>\n"
 
         output += "</ul>\n"
-        output += "<p><em>Please provide these details and I'll complete the configuration for you.</em></p>\n"
     else:
-        output += "<p>All required fields are filled in.</p>\n"
-
-    # Show the payload structure (collapsed for long payloads)
-    payload_json = json.dumps(payload.get("payload", payload), indent=2)
-    if len(payload_json) > 500:
-        output += "<details>\n"
-        output += "<summary>View payload details</summary>\n"
-        output += f"<pre><code>{payload_json}</code></pre>\n"
-        output += "</details>\n"
-    else:
-        output += f"<pre><code>{payload_json}</code></pre>\n"
+        output += "<p>All required fields are set. Ready to execute.</p>\n"
 
     return output
