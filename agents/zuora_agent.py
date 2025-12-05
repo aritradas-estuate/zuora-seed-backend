@@ -210,25 +210,25 @@ When creating multiple related objects in one request (Product → Rate Plan →
 ## Completion Summary - REQUIRED
 When ALL placeholders are filled and payloads are complete, you MUST provide a configuration summary using this format:
 
-### ✅ Configuration Complete
-
+### ✅ Payload Created for Review
+<br>
 **Product:** [Product Name]
 [One sentence describing what this product offers]
-
+<br>
 **Rate Plan:** [Rate Plan Name]
-
+<br>
 **Charges:**
 | Charge | Type | Model | Pricing | Billing |
 |--------|------|-------|---------|---------|
 | [Name] | Recurring/Usage/OneTime | Flat Fee/Tiered/etc. | $X/month or pricing details | Monthly/Annual/etc. |
-
+<br>
 **Example output:**
 | Charge | Type | Model | Pricing | Billing |
 |--------|------|-------|---------|---------|
 | Monthly Base Fee | Recurring | Flat Fee | $49/month | Monthly |
 | API Calls | Usage | Tiered | 10k included, $0.003/call after | Monthly |
-
-Then ask: **"Ready to create these in Zuora?"**
+<br>
+**Review payload and proceed to create in Zuora**<br>
 
 Remember: EFFICIENCY is paramount. Every tool call costs time and money. Plan first, execute once.
 """

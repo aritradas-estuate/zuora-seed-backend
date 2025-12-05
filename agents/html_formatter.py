@@ -17,12 +17,12 @@ def html_escape(text: str) -> str:
     )
 
 
-def _extract_code_blocks(text: str) -> Tuple[str, List[str]]:
+def _extract_code_blocks(text: str) -> Tuple[str, List[Tuple[str, str]]]:
     """
     Extract code blocks and replace with placeholders.
-    Returns modified text and list of extracted blocks.
+    Returns modified text and list of extracted blocks (lang, code) tuples.
     """
-    code_blocks = []
+    code_blocks: List[Tuple[str, str]] = []
 
     def replace_block(match):
         lang = match.group(1) or ""
@@ -182,7 +182,7 @@ def _convert_tables(text: str) -> str:
 
             if not in_table:
                 result.append(
-                    '<table style="border: 1px solid black; border-collapse: collapse;">'
+                    '<div style="overflow-x: auto;"><table style="border: 1px solid black; border-collapse: collapse;">'
                 )
                 in_table = True
                 header_done = False
@@ -207,13 +207,13 @@ def _convert_tables(text: str) -> str:
                 result.append("</tr>")
         else:
             if in_table:
-                result.append("</tbody></table>")
+                result.append("</tbody></table></div>")
                 in_table = False
                 header_done = False
             result.append(line)
 
     if in_table:
-        result.append("</tbody></table>")
+        result.append("</tbody></table></div>")
 
     return "\n".join(result)
 
