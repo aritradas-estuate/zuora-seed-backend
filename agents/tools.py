@@ -1211,10 +1211,10 @@ def _normalize_tiers(
     Supports two input formats:
     1. Simplified: [{"units": 1000, "price": 0.10}, {"units": 10000, "price": 0.08}, {"price": 0.05}]
        - "units" = EndingUnit for that tier
-       - StartingUnit is auto-calculated (0 for first tier, prev_ending+1 for rest)
+       - StartingUnit is auto-calculated (1 for first tier, prev_ending+1 for rest)
        - Omitting "units" or setting it to None means unlimited (last tier)
 
-    2. Explicit: [{"StartingUnit": 0, "EndingUnit": 1000, "Price": 0.10}, ...]
+    2. Explicit: [{"StartingUnit": 1, "EndingUnit": 1000, "Price": 0.10}, ...]
        - Full control over tier boundaries
        - Missing StartingUnit is auto-calculated
 
@@ -1242,18 +1242,19 @@ def _normalize_tiers(
         # Determine StartingUnit and EndingUnit
         if "units" in tier:
             # Simplified format: {"units": 1000, "price": 0.10}
+            # StartingUnit starts from 1 (not 0) per Zuora convention
             starting = (
-                0 if i == 0 else (prev_ending + 1 if prev_ending is not None else 0)
+                1 if i == 0 else (prev_ending + 1 if prev_ending is not None else 1)
             )
             ending = tier.get("units")  # None means unlimited
         else:
-            # Explicit format: {"StartingUnit": 0, "EndingUnit": 1000, "Price": 0.10}
+            # Explicit format: {"StartingUnit": 1, "EndingUnit": 1000, "Price": 0.10}
             if "StartingUnit" in tier:
                 starting = tier["StartingUnit"]
             else:
-                # Auto-calculate: 0 for first tier, prev_ending + 1 for subsequent
+                # Auto-calculate: 1 for first tier, prev_ending + 1 for subsequent
                 starting = (
-                    0 if i == 0 else (prev_ending + 1 if prev_ending is not None else 0)
+                    1 if i == 0 else (prev_ending + 1 if prev_ending is not None else 1)
                 )
 
             ending = tier.get("EndingUnit")  # None means unlimited
@@ -1405,7 +1406,7 @@ def create_charge(
         tiers: List of pricing tiers for Tiered/Volume pricing. Supports two formats:
                Explicit format (full control):
                - Price (required): Price for this tier
-               - StartingUnit: Unit where tier starts (default: 0 for first tier, auto-calculated for rest)
+               - StartingUnit: Unit where tier starts (default: 1 for first tier, auto-calculated for rest)
                - EndingUnit: Unit where tier ends (omit for unlimited/last tier)
                - PriceFormat: "Per Unit" or "Flat Fee" (default: "Per Unit")
                - Currency: Override currency for this tier (default: uses charge currency)
@@ -1440,7 +1441,7 @@ def create_charge(
             charge_model="Tiered Pricing",
             uom="Calls",
             tiers=[
-                {"StartingUnit": 0, "EndingUnit": 1000, "Price": 0.10, "PriceFormat": "Per Unit"},
+                {"StartingUnit": 1, "EndingUnit": 1000, "Price": 0.10, "PriceFormat": "Per Unit"},
                 {"StartingUnit": 1001, "EndingUnit": 10000, "Price": 0.08, "PriceFormat": "Per Unit"},
                 {"StartingUnit": 10001, "Price": 0.05, "PriceFormat": "Per Unit"},  # No EndingUnit = unlimited
             ]
@@ -1453,7 +1454,7 @@ def create_charge(
             charge_model="Tiered Pricing",
             uom="Calls",
             tiers=[
-                {"units": 1000, "price": 0.10},   # 0-1000 @ $0.10/unit
+                {"units": 1000, "price": 0.10},   # 1-1000 @ $0.10/unit
                 {"units": 10000, "price": 0.08},  # 1001-10000 @ $0.08/unit
                 {"price": 0.05},                   # 10001+ @ $0.05/unit (unlimited)
             ]
@@ -1653,7 +1654,7 @@ def create_charge(
                         "Currency": currency,
                         "Price": overage_tier_price,
                         "PriceFormat": "Per Unit",
-                        "StartingUnit": 0,
+                        "StartingUnit": 1,
                         "Tier": 1,
                     }
                 ]
@@ -1665,22 +1666,31 @@ def create_charge(
             )
 
     elif price is not None:
-        # Single tier for Flat Fee/Per Unit pricing
-        # Determine PriceFormat based on charge model
-        price_format = (
-            "Flat Fee" if normalized_charge_model == "Flat Fee Pricing" else "Per Unit"
-        )
-        payload_data["ProductRatePlanChargeTierData"] = {
-            "ProductRatePlanChargeTier": [
-                {
-                    "Currency": currency,
-                    "Price": price,
-                    "StartingUnit": 0,
-                    "PriceFormat": price_format,
-                    "Tier": 1,
-                }
-            ]
-        }
+        # Single tier pricing - structure differs by charge model
+        if normalized_charge_model == "Flat Fee Pricing":
+            # Flat Fee: minimal tier structure per Zuora docs
+            # No StartingUnit, Tier, or PriceFormat needed
+            payload_data["ProductRatePlanChargeTierData"] = {
+                "ProductRatePlanChargeTier": [
+                    {
+                        "Currency": currency,
+                        "Price": price,
+                    }
+                ]
+            }
+        else:
+            # Per Unit and other unit-based models need full tier structure
+            payload_data["ProductRatePlanChargeTierData"] = {
+                "ProductRatePlanChargeTier": [
+                    {
+                        "Currency": currency,
+                        "Price": price,
+                        "StartingUnit": 1,
+                        "PriceFormat": "Per Unit",
+                        "Tier": 1,
+                    }
+                ]
+            }
 
     if name:
         # Validate name length
