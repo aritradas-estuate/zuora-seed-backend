@@ -348,19 +348,25 @@ def format_validation_questions(
     Returns:
         HTML-formatted string with questions
     """
-    output = f"<h4>Clarifying Questions Needed</h4><br>"
-    output += f"<p>To create this <strong>{api_type}</strong> payload, I need the following information:</p><br>"
-    output += "<ol><br>"
+    friendly_type = (
+        api_type.replace("_create", "").replace("_update", "").replace("_", " ").title()
+    )
+
+    output = f"To create this <strong>{friendly_type}</strong>, I need the following information:<br><br>"
+    output += "<ol>"
 
     for field_name, description in missing_fields:
-        output += (
-            f"  <li>What is the <strong>{field_name}</strong>? ({description})</li><br>"
-        )
+        question, examples = _get_placeholder_question(field_name, api_type)
+        output += f"<li><strong>{field_name}</strong>"
+        output += "<ul>"
+        output += f"<li>{question}</li>"
+        if examples:
+            output += f"<li>Examples: {', '.join(examples)}</li>"
+        output += "</ul>"
+        output += "</li>"
 
-    output += "</ol><br>"
-    output += (
-        "<p><em>Please provide these details and I'll create the payload.</em></p>"
-    )
+    output += "</ol>"
+    output += "<br>"
 
     return output
 
@@ -457,74 +463,76 @@ def _get_env_options(option_type: str) -> List[str]:
     return []
 
 
-def _get_placeholder_question(field_name: str, api_type: str) -> str:
+def _get_placeholder_question(field_name: str, api_type: str) -> Tuple[str, List[str]]:
     """
-    Generate a natural language question for a placeholder field.
-    Uses environment settings when available and provides human-friendly options.
+    Generate a natural language question and examples for a placeholder field.
+
+    Returns:
+        Tuple of (question, list of example options)
     """
     field_lower = field_name.lower()
 
     if field_lower == "chargemodel":
-        models = _get_env_options("charge_models")
-        if models:
-            friendly_options = get_friendly_options(models, max_show=4)
-            return f"What pricing model? (e.g., {friendly_options} - common: {COMMON_DEFAULTS.get('ChargeModel', 'flat fee')})"
-        return f"What pricing model? (e.g., flat fee, per unit, tiered, volume-based - common: {COMMON_DEFAULTS.get('ChargeModel', 'flat fee')})"
+        return (
+            "What pricing model would you like?",
+            ["flat fee", "per unit", "tiered"],
+        )
 
     elif field_lower == "billingperiod":
-        periods = _get_env_options("billing_periods")
-        if periods:
-            friendly_options = get_friendly_options(periods, max_show=4)
-            return f"What billing period? (e.g., {friendly_options} - common: {COMMON_DEFAULTS.get('BillingPeriod', 'monthly')})"
-        return f"What billing period? (e.g., monthly, quarterly, yearly, weekly - common: {COMMON_DEFAULTS.get('BillingPeriod', 'monthly')})"
+        return (
+            "What billing period would you like?",
+            ["monthly", "quarterly", "annual"],
+        )
 
     elif field_lower == "billcycletype":
-        types = _get_env_options("billing_cycle_types")
-        default_cycle = COMMON_DEFAULTS.get("BillCycleType", "customer's billing day")
-        if types:
-            friendly_options = get_friendly_options(types, max_show=4)
-            return f"What bill cycle type? (e.g., {friendly_options} - common: {default_cycle})"
-        return f"What bill cycle type? (e.g., customer's billing day, specific day of month, subscription start day - common: {default_cycle})"
+        return (
+            "What bill cycle type would you like?",
+            [
+                "customer's billing day",
+                "specific day of month",
+                "subscription start day",
+            ],
+        )
 
     elif field_lower == "productrateplanchargertierdata":
-        return "What is the price? (e.g., 49.99)"
+        return ("What is the price?", ["49.99", "99.00", "199.00"])
 
     elif field_lower == "productrateplanid":
-        return "Which rate plan should this charge belong to?"
+        return ("Which rate plan should this charge belong to?", [])
 
     elif field_lower == "productid":
-        return "Which product should this rate plan belong to?"
+        return ("Which product should this rate plan belong to?", [])
 
     elif field_lower == "uom":
-        return "What unit of measure? (e.g., API calls, GB, users, transactions)"
+        return ("What unit of measure?", ["API calls", "GB", "users"])
 
     elif field_lower == "name":
         friendly_type = api_type.replace("_create", "").replace("_", " ")
-        return f"What should this {friendly_type} be named?"
+        return (f"What should this {friendly_type} be named?", [])
 
     elif field_lower == "chargetype":
-        return f"What type of charge? (e.g., recurring, one-time, or usage-based - common: {COMMON_DEFAULTS.get('ChargeType', 'recurring')})"
+        return ("What type of charge?", ["recurring", "one-time", "usage"])
 
     elif field_lower == "triggerevent":
-        return f"When should billing start? (e.g., contract start, service activation, customer acceptance - common: {COMMON_DEFAULTS.get('TriggerEvent', 'contract start')})"
+        return (
+            "When should billing start?",
+            ["contract start", "service activation", "customer acceptance"],
+        )
 
     elif field_lower in ("effectivestartdate", "effectiveenddate"):
         friendly_name = "start date" if "start" in field_lower else "end date"
-        return f"What {friendly_name}? (format: YYYY-MM-DD)"
+        return (f"What {friendly_name}? (format: YYYY-MM-DD)", [])
 
     elif field_lower == "sku":
-        return "What SKU (product code)?"
+        return ("What SKU (product code)?", [])
 
     elif field_lower == "currency":
-        currencies = _get_env_options("currencies")
-        if currencies:
-            return f"What currency? (e.g., {', '.join(currencies[:3])} - common: USD)"
-        return "What currency? (e.g., USD, EUR, GBP - common: USD)"
+        return ("What currency?", ["USD", "EUR", "GBP"])
 
     else:
         # Generic fallback - make field name readable
         readable_name = field_name.replace("_", " ").replace("__c", "")
-        return f"What {readable_name}?"
+        return (f"What {readable_name}?", [])
 
 
 def format_placeholder_warning(
@@ -535,10 +543,9 @@ def format_placeholder_warning(
     total_count: int = 1,
 ) -> str:
     """
-    Format a user-friendly message about placeholders with natural language questions.
+    Format a user-friendly message about placeholders with structured questions.
 
-    Instead of showing tool commands (which users cannot execute), this generates
-    natural language questions that the agent can ask the user.
+    Shows what was created and lists missing fields with questions and examples.
 
     Args:
         api_type: The API type
@@ -548,9 +555,8 @@ def format_placeholder_warning(
         total_count: Total number of payloads of this type
 
     Returns:
-        HTML-formatted message with clarifying questions (no JSON)
+        HTML-formatted message with structured clarifying questions
     """
-    payload_id = payload.get("payload_id", "N/A")
     payload_name = payload.get("payload", {}).get(
         "Name", payload.get("payload", {}).get("name", "unnamed")
     )
@@ -560,19 +566,22 @@ def format_placeholder_warning(
         api_type.replace("_create", "").replace("_update", "").replace("_", " ").title()
     )
 
-    output = f"<h4>Created {friendly_type}</h4><br>"
-    output += f"<p><strong>Name:</strong> {payload_name} &nbsp; <strong>ID:</strong> {payload_id}</p><br>"
+    output = f'Created <strong>{friendly_type}</strong>: "{payload_name}"<br><br>'
 
     if placeholder_list:
-        output += f"<p>I need {len(placeholder_list)} more detail(s):</p><br>"
-        output += "<ul><br>"
-
+        output += "<ol>"
         for field in placeholder_list:
-            question = _get_placeholder_question(field, api_type)
-            output += f"  <li>{question}</li><br>"
-
-        output += "</ul><br>"
+            question, examples = _get_placeholder_question(field, api_type)
+            output += f"<li><strong>{field}</strong> ({payload_name})"
+            output += "<ul>"
+            output += f"<li>{question}</li>"
+            if examples:
+                output += f"<li>Examples: {', '.join(examples)}</li>"
+            output += "</ul>"
+            output += "</li>"
+        output += "</ol>"
+        output += "<br>"
     else:
-        output += "<p>All required fields are set. Ready to execute.</p><br>"
+        output += "All required fields are set.<br>"
 
     return output

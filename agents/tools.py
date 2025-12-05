@@ -594,9 +594,8 @@ def create_payload(
             "Name", complete_payload.get("name", "unnamed")
         )
 
-        output = f"<h4>Created {friendly_type}</h4><br>"
-        output += f"<p><strong>Name:</strong> {payload_name} &nbsp; <strong>ID:</strong> {new_payload['payload_id']}</p><br>"
-        output += "<p>All required fields are set. Ready to execute.</p><br>"
+        output = f'Created <strong>{friendly_type}</strong>: "{payload_name}"<br><br>'
+        output += "All required fields are set.<br>"
 
         return output
 
@@ -1559,11 +1558,10 @@ def create_charge(
     if description:
         payload_data["Description"] = description
 
-    # Billing period - required, default to Month for recurring
+    # Billing period - only set if explicitly provided
+    # If not provided for Recurring charges, validation will create a placeholder
     if billing_period:
         payload_data["BillingPeriod"] = billing_period
-    elif charge_type == "Recurring":
-        payload_data["BillingPeriod"] = "Month"
 
     if uom:
         # Validate UOM against available UOMs in the tenant

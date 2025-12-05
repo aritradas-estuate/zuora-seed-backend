@@ -325,7 +325,10 @@ def markdown_to_html(text: str) -> str:
 
     # Step 5: Replace \n with <br> for proper HTML line breaks
     # Only replace \n that are NOT between HTML tags (i.e., content line breaks)
+    # First, replace double newlines with <br><br> (paragraph breaks)
+    # Then replace single newlines with <br> (line breaks)
     # Pattern: \n that is NOT preceded by > or followed by <
+    text = re.sub(r"(?<!>)\n\n(?!<)", "<br><br>", text)
     text = re.sub(r"(?<!>)\n(?!<)", "<br>", text)
 
     return text
