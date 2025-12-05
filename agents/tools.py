@@ -1199,7 +1199,7 @@ def create_charge(
     billing_period: Optional[
         Literal["Month", "Quarter", "Annual", "Semi-Annual", "Week", "Specific Months"]
     ] = None,
-    billing_timing: Literal["In Advance", "In Arrears"] = "In Advance",
+    billing_timing: Optional[Literal["In Advance", "In Arrears"]] = None,
     bill_cycle_type: Literal[
         "DefaultFromCustomer",
         "SpecificDayofMonth",
@@ -1212,6 +1212,15 @@ def create_charge(
     uom: Optional[str] = None,
     description: Optional[str] = None,
     currency: str = "USD",
+    rating_group: Optional[
+        Literal[
+            "ByBillingPeriod",
+            "ByUsageStartDate",
+            "ByUsageRecord",
+            "ByUsageUpload",
+            "ByGroupId",
+        ]
+    ] = None,
 ) -> str:
     """Generate charge creation payload per Zuora v1 API schema.
 
@@ -1228,9 +1237,10 @@ def create_charge(
     Smart defaults applied:
     - BillCycleType: DefaultFromCustomer
     - TriggerEvent: ContractEffective
-    - BillingTiming: In Advance
+    - BillingTiming: In Arrears for Usage charges, In Advance for others
     - BillingPeriod: Month (for Recurring charges)
     - Currency: USD
+    - RatingGroup: ByBillingPeriod for tiered/volume Usage charges
 
     Args:
         rate_plan_id: Zuora rate plan ID OR object reference (e.g., '@{ProductRatePlan[0].Id}')
@@ -1246,12 +1256,14 @@ def create_charge(
                - PriceFormat: "Per Unit" or "Flat Fee" (default: "Per Unit")
                - Currency: Override currency for this tier (default: uses charge currency)
         billing_period: Month, Quarter, Annual, etc.
-        billing_timing: In Advance or In Arrears
+        billing_timing: In Advance or In Arrears (defaults to In Arrears for Usage, In Advance otherwise)
         bill_cycle_type: When to bill
         trigger_event: When to start billing
         uom: Unit of measure for usage charges
         description: Charge description
         currency: Currency code (default: USD)
+        rating_group: How to aggregate usage for rating (ByBillingPeriod, ByUsageStartDate, etc.)
+                     Auto-set to ByBillingPeriod for tiered/volume Usage charges
 
     Examples:
         # Flat Fee Pricing (single price)
@@ -1330,7 +1342,15 @@ def create_charge(
     # Required fields with smart defaults (per Zuora v1 API)
     payload_data["BillCycleType"] = bill_cycle_type
     payload_data["TriggerEvent"] = trigger_event
-    payload_data["BillingTiming"] = billing_timing
+
+    # Smart default for BillingTiming based on charge type
+    # Usage charges are typically billed "In Arrears" (after usage occurs)
+    if billing_timing is not None:
+        payload_data["BillingTiming"] = billing_timing
+    elif charge_type == "Usage":
+        payload_data["BillingTiming"] = "In Arrears"
+    else:
+        payload_data["BillingTiming"] = "In Advance"
 
     if description:
         payload_data["Description"] = description
@@ -1352,6 +1372,22 @@ def create_charge(
                 "This may cause an API error."
             )
         payload_data["UOM"] = uom
+
+    # Determine if charge model is tiered/volume for RatingGroup logic
+    normalized_charge_model = payload_data.get("ChargeModel", "")
+    is_tiered_or_volume = normalized_charge_model in (
+        "Tiered Pricing",
+        "Volume Pricing",
+        "Tiered with Overage Pricing",
+    )
+
+    # RatingGroup - required for tiered/volume Usage charges to properly aggregate usage
+    # Without this, Zuora may not display tiered pricing correctly
+    if rating_group:
+        payload_data["RatingGroup"] = rating_group
+    elif charge_type == "Usage" and is_tiered_or_volume:
+        # Auto-set RatingGroup for tiered/volume usage charges
+        payload_data["RatingGroup"] = "ByBillingPeriod"
 
     # Build ProductRatePlanChargeTierData (required per Zuora API)
     # This is the container for pricing information

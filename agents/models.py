@@ -75,6 +75,16 @@ ZUORA_TRIGGER_EVENTS = Literal[
 # Zuora v1 API BillingTiming enum values
 ZUORA_BILLING_TIMING = Literal["In Advance", "In Arrears"]
 
+# Zuora v1 API RatingGroup enum values
+# Specifies how usage records are aggregated for rating in tiered/volume pricing
+ZUORA_RATING_GROUP = Literal[
+    "ByBillingPeriod",  # Rating based on all usages in a billing period (default)
+    "ByUsageStartDate",  # Rating based on all usages on the same usage start date
+    "ByUsageRecord",  # Rating based on each individual usage record
+    "ByUsageUpload",  # Rating based on all usages in an uploaded file
+    "ByGroupId",  # Rating based on custom group (requires Active Rating feature)
+]
+
 
 class Charge(BaseModel):
     """Product Rate Plan Charge model matching Zuora v1 API schema."""

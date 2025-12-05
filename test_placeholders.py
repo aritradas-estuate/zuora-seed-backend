@@ -457,6 +457,86 @@ def test_update_payload_by_name():
         return None
 
 
+def test_tiered_usage_charge_defaults():
+    """Test that tiered usage charges get correct smart defaults.
+
+    Verifies:
+    1. BillingTiming defaults to "In Arrears" for Usage charges
+    2. RatingGroup defaults to "ByBillingPeriod" for tiered/volume Usage charges
+    """
+    print(
+        "\n🧪 Test 8: Tiered Usage Charge Smart Defaults (RatingGroup & BillingTiming)"
+    )
+
+    request = {
+        "persona": "ProductManager",
+        "message": """Create a product 'Analytics Pro' with:
+        - Rate plan 'Pro Plan'
+        - Usage charge 'API Calls' with tiered pricing:
+          - Tier 1: 0-10000 units at $0.004
+          - Tier 2: 10001-50000 units at $0.0035
+          - Tier 3: 50001+ units at $0.003
+        - UOM: Calls""",
+        "conversation_id": "test-tiered-usage-001",
+    }
+
+    try:
+        response = invoke(request)
+        print_response("Create tiered usage charge", response)
+
+        payloads = response.get("zuora_api_payloads", [])
+
+        # Find the charge payload
+        charge_payload = None
+        for p in payloads:
+            if p.get("zuora_api_type") == "charge_create":
+                charge_payload = p
+                break
+
+        if not charge_payload:
+            print("\n❌ Test failed: No charge payload found")
+            return None
+
+        charge_data = charge_payload.get("payload", {})
+        print(f"\nCharge payload data:")
+        print(f"  ChargeType: {charge_data.get('ChargeType')}")
+        print(f"  ChargeModel: {charge_data.get('ChargeModel')}")
+        print(f"  BillingTiming: {charge_data.get('BillingTiming')}")
+        print(f"  RatingGroup: {charge_data.get('RatingGroup')}")
+
+        # Verify BillingTiming is "In Arrears" for Usage charge
+        billing_timing = charge_data.get("BillingTiming")
+        if billing_timing != "In Arrears":
+            print(
+                f"\n❌ Test failed: BillingTiming should be 'In Arrears' for Usage charge, got: {billing_timing}"
+            )
+            return None
+
+        # Verify RatingGroup is "ByBillingPeriod" for tiered Usage charge
+        rating_group = charge_data.get("RatingGroup")
+        if rating_group != "ByBillingPeriod":
+            print(
+                f"\n❌ Test failed: RatingGroup should be 'ByBillingPeriod' for tiered Usage charge, got: {rating_group}"
+            )
+            return None
+
+        print("\n✅ Test passed: Tiered usage charge has correct smart defaults")
+        print("   - BillingTiming = 'In Arrears'")
+        print("   - RatingGroup = 'ByBillingPeriod'")
+
+        return response
+
+    except AssertionError as e:
+        print(f"\n❌ Test failed: {e}")
+        return None
+    except Exception as e:
+        print(f"\n❌ Test error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return None
+
+
 def run_all_tests():
     """Run all placeholder tests."""
     print("\n" + "=" * 70)
@@ -471,6 +551,7 @@ def run_all_tests():
         ("Update Removes Placeholder", test_update_payload_removes_placeholder),
         ("Case-Insensitive Update", test_update_payload_case_insensitive),
         ("Update by Name (Fuzzy)", test_update_payload_by_name),
+        ("Tiered Usage Defaults", test_tiered_usage_charge_defaults),
     ]
 
     results = []

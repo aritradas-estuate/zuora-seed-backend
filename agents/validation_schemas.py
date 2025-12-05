@@ -144,6 +144,7 @@ REQUIRED_FIELDS = {
             "TriggerEvent": "When billing starts: 'ContractEffective', 'ServiceActivation', 'CustomerAcceptance'",
             "UOM": "Unit of measure for usage charges (e.g., API_CALL, GB, SMS)",
             "ProductRatePlanChargeTierData": "Container for pricing tiers with currency and price",
+            "RatingGroup": "How to aggregate usage for rating: 'ByBillingPeriod' (default), 'ByUsageStartDate', 'ByUsageRecord', 'ByUsageUpload', or 'ByGroupId'. Required for tiered/volume usage charges.",
         },
     },
     "charge_create": {
@@ -171,6 +172,7 @@ REQUIRED_FIELDS = {
             "TriggerEvent": "When billing starts: 'ContractEffective', 'ServiceActivation', 'CustomerAcceptance'",
             "UOM": "Unit of measure for usage charges (e.g., API_CALL, GB, SMS)",
             "ProductRatePlanChargeTierData": "Container for pricing tiers with currency and price",
+            "RatingGroup": "How to aggregate usage for rating: 'ByBillingPeriod' (default), 'ByUsageStartDate', 'ByUsageRecord', 'ByUsageUpload', or 'ByGroupId'. Required for tiered/volume usage charges.",
         },
     },
     "account": {
