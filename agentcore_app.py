@@ -426,6 +426,18 @@ def invoke(payload: dict) -> dict:
                         )
                     )
 
+            # Check for payloads with placeholders and generate warning
+            payloads_with_placeholders = [
+                p for p in modified_payloads_data if p.get("_placeholders")
+            ]
+            if payloads_with_placeholders:
+                from agents.html_formatter import generate_placeholder_warning_html
+
+                placeholder_warning = generate_placeholder_warning_html(
+                    payloads_with_placeholders
+                )
+                answer = placeholder_warning + answer
+
             # Generate persona-specific citations (content-aware based on user message)
             citations = generate_mock_citations(persona, request.message)
 

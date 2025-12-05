@@ -444,3 +444,74 @@ def highlight_placeholders_in_json(json_str: str) -> str:
     )
 
     return styled
+
+
+def generate_placeholder_warning_html(
+    payloads_with_placeholders: List[Dict[str, Any]],
+) -> str:
+    """
+    Generate a red warning table for payloads containing placeholders.
+
+    Args:
+        payloads_with_placeholders: List of payload dicts that have _placeholders field
+
+    Returns:
+        HTML string with styled warning table
+    """
+    if not payloads_with_placeholders:
+        return ""
+
+    # Build list items for each payload's placeholders
+    items = []
+    for p in payloads_with_placeholders:
+        payload = p.get("payload", {})
+        api_type = p.get("zuora_api_type", "")
+        placeholders = p.get("_placeholders", [])
+
+        if not placeholders:
+            continue
+
+        # Determine friendly name based on api_type
+        if api_type == "charge_create":
+            name = payload.get("Name", "Unnamed Charge")
+            type_label = "Rate Plan Charge"
+        elif api_type == "rate_plan_create":
+            name = payload.get("Name", "Unnamed Rate Plan")
+            type_label = "Rate Plan"
+        elif api_type == "product_create":
+            name = payload.get("Name", "Unnamed Product")
+            type_label = "Product"
+        else:
+            name = payload.get("Name", "Unnamed")
+            type_label = "Payload"
+
+        # Format placeholder fields - combine multiple into one line
+        if len(placeholders) == 1:
+            fields_str = f"<code>{placeholders[0]}</code>"
+            items.append(
+                f'<li>{type_label} "{name}" has a placeholder for {fields_str}</li>'
+            )
+        else:
+            fields_str = ", ".join(f"<code>{f}</code>" for f in placeholders)
+            items.append(
+                f'<li>{type_label} "{name}" has placeholders for {fields_str}</li>'
+            )
+
+    if not items:
+        return ""
+
+    items_html = "\n".join(items)
+
+    return f"""<div style="overflow-x: auto; margin-bottom: 16px;">
+<table style="width: 100%; border-collapse: collapse;">
+<tr>
+<td style="background-color: #fee2e2; border: 2px solid #dc2626; padding: 12px 16px; border-radius: 4px;">
+<strong style="color: #991b1b;">⚠️ Missing Information in Payloads</strong>
+<ul style="margin: 8px 0 0 0; padding-left: 20px; color: #7f1d1d;">
+{items_html}
+</ul>
+</td>
+</tr>
+</table>
+</div>
+"""
