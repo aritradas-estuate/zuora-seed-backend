@@ -60,6 +60,33 @@ def _find_existing_key(obj: Dict[str, Any], key: str) -> Optional[str]:
     return None
 
 
+# Field name mapping for Zuora CRUD API (lowercase -> PascalCase)
+# The /v1/object/* endpoints require PascalCase field names
+CRUD_FIELD_MAPPING = {
+    "name": "Name",
+    "sku": "SKU",
+    "description": "Description",
+    "effectivestartdate": "EffectiveStartDate",
+    "effectiveenddate": "EffectiveEndDate",
+}
+
+
+def _to_crud_field_name(field: str) -> str:
+    """
+    Convert field name to PascalCase for Zuora CRUD API.
+
+    The Zuora /v1/object/* endpoints require PascalCase field names
+    (e.g., 'Name' not 'name', 'SKU' not 'sku').
+
+    Args:
+        field: Field name in any casing
+
+    Returns:
+        PascalCase field name for Zuora CRUD API
+    """
+    return CRUD_FIELD_MAPPING.get(field.lower(), field)
+
+
 def _find_payload_by_name(
     matching: List[Tuple[int, Dict[str, Any]]], name: str
 ) -> Tuple[Optional[Tuple[int, Dict[str, Any]]], List[str]]:
@@ -962,11 +989,14 @@ def update_zuora_product(
     """Generate payload to update product attribute."""
     payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
 
+    # Convert to PascalCase for Zuora CRUD API
+    crud_field_name = _to_crud_field_name(attribute)
+
     update_payload = {
         "payload": {
             "method": "PUT",
             "endpoint": f"/v1/object/product/{product_id}",
-            "body": {attribute: new_value},
+            "body": {crud_field_name: new_value},
         },
         "zuora_api_type": "product_update",
         "payload_id": str(uuid.uuid4())[:8],
@@ -978,7 +1008,7 @@ def update_zuora_product(
     return f"""Generated product update payload:
 
 **Endpoint:** PUT /v1/object/product/{product_id}
-**Body:** {{"{attribute}": "{new_value}"}}
+**Body:** {{"{crud_field_name}": "{new_value}"}}
 
 This payload has been added to the response. Execute it via the Zuora API to apply the update.
 
@@ -995,11 +1025,14 @@ def update_zuora_rate_plan(
     """Generate payload to update rate plan attribute."""
     payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
 
+    # Convert to PascalCase for Zuora CRUD API
+    crud_field_name = _to_crud_field_name(attribute)
+
     update_payload = {
         "payload": {
             "method": "PUT",
             "endpoint": f"/v1/object/product-rate-plan/{rate_plan_id}",
-            "body": {attribute: new_value},
+            "body": {crud_field_name: new_value},
         },
         "zuora_api_type": "rate_plan_update",
         "payload_id": str(uuid.uuid4())[:8],
@@ -1011,7 +1044,7 @@ def update_zuora_rate_plan(
     return f"""Generated rate plan update payload:
 
 **Endpoint:** PUT /v1/object/product-rate-plan/{rate_plan_id}
-**Body:** {{"{attribute}": "{new_value}"}}
+**Body:** {{"{crud_field_name}": "{new_value}"}}
 
 This payload has been added to the response. Execute it via the Zuora API to apply the update.
 
@@ -1035,11 +1068,14 @@ Charge Model and Charge Type cannot be changed if this charge is used in any exi
 
     payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
 
+    # Convert to PascalCase for Zuora CRUD API
+    crud_field_name = _to_crud_field_name(attribute)
+
     update_payload = {
         "payload": {
             "method": "PUT",
             "endpoint": f"/v1/object/product-rate-plan-charge/{charge_id}",
-            "body": {attribute: new_value},
+            "body": {crud_field_name: new_value},
         },
         "zuora_api_type": "charge_update",
         "payload_id": str(uuid.uuid4())[:8],
@@ -1051,7 +1087,7 @@ Charge Model and Charge Type cannot be changed if this charge is used in any exi
     return f"""Generated charge update payload:
 
 **Endpoint:** PUT /v1/object/product-rate-plan-charge/{charge_id}
-**Body:** {{"{attribute}": {json.dumps(new_value)}}}
+**Body:** {{"{crud_field_name}": {json.dumps(new_value)}}}
 
 This payload has been added to the response. Execute it via the Zuora API to apply the update.
 
@@ -1509,6 +1545,82 @@ def _infer_charge_model_conservative(
     return None
 
 
+# Common UOM aliases mapped to valid Zuora UOM names
+# Used to auto-correct user input to valid tenant UOMs
+UOM_ALIASES: Dict[str, str] = {
+    # API/Calls
+    "calls": "APICalls",
+    "call": "APICalls",
+    "api calls": "APICalls",
+    "api call": "APICalls",
+    "apicall": "APICalls",
+    # SMS/Messages
+    "messages": "sms",
+    "message": "sms",
+    "texts": "sms",
+    "text": "sms",
+    # Storage
+    "gigabytes": "GB",
+    "gigabyte": "GB",
+    "megabytes": "MB",
+    "megabyte": "MB",
+    # Time
+    "hours": "Hour",
+    "hour": "Hour",
+    "minutes": "Minutes",
+    "minute": "Minutes",
+    # Entities
+    "users": "User",
+    "user": "User",
+    "licenses": "License",
+    "license": "License",
+    "units": "Unit",
+    "unit": "Unit",
+    # Generic
+    "each": "each",
+    "item": "each",
+    "items": "each",
+}
+
+
+def _normalize_uom(uom: str, available_uoms: List[str]) -> Tuple[str, bool]:
+    """
+    Normalize UOM to a valid Zuora UOM name.
+
+    Args:
+        uom: User-provided UOM string
+        available_uoms: List of valid UOMs from tenant
+
+    Returns:
+        Tuple of (normalized_uom, was_corrected)
+    """
+    # Exact match - use as-is
+    if uom in available_uoms:
+        return uom, False
+
+    # Case-insensitive match against available UOMs
+    uom_lower = uom.lower()
+    for valid_uom in available_uoms:
+        if valid_uom.lower() == uom_lower:
+            return valid_uom, True
+
+    # Check aliases and find matching available UOM
+    if uom_lower in UOM_ALIASES:
+        alias_target = UOM_ALIASES[uom_lower]
+        # Verify alias target exists in tenant (case-insensitive)
+        for valid_uom in available_uoms:
+            if valid_uom.lower() == alias_target.lower():
+                return valid_uom, True
+
+    # Default to "each" if available
+    for valid_uom in available_uoms:
+        if valid_uom.lower() == "each":
+            return valid_uom, True
+
+    # Last resort - return "each" even if not in available (Zuora usually has it)
+    return "each", True
+
+
 def _get_charge_model_inference_reason(
     charge_type: Optional[str],
     price: Optional[float],
@@ -1785,10 +1897,22 @@ def create_charge(
     payload_data["BillCycleType"] = bill_cycle_type
     payload_data["TriggerEvent"] = trigger_event
 
+    # Determine if this is a tiered/volume charge model
+    # Tiered/Volume usage charges do NOT use BillingTiming per Zuora API
+    current_charge_model = payload_data.get("ChargeModel", "")
+    is_tiered_model = current_charge_model in (
+        "Tiered Pricing",
+        "Volume Pricing",
+        "Tiered with Overage Pricing",
+    )
+
     # Smart default for BillingTiming based on charge type
-    # Usage charges are typically billed "In Arrears" (after usage occurs)
+    # Note: Tiered/Volume usage charges should NOT have BillingTiming
     if billing_timing is not None:
         payload_data["BillingTiming"] = billing_timing
+    elif charge_type == "Usage" and is_tiered_model:
+        # Do NOT add BillingTiming for tiered/volume usage charges
+        pass
     elif charge_type == "Usage":
         payload_data["BillingTiming"] = "In Arrears"
         defaults_applied.append(
@@ -1815,16 +1939,23 @@ def create_charge(
         payload_data["BillingPeriod"] = billing_period
 
     if uom:
-        # Validate UOM against available UOMs in the tenant
+        # Auto-correct UOM to valid tenant UOM
         from .zuora_settings import get_available_uom_names
 
         available_uoms = get_available_uom_names()
-        if available_uoms and uom not in available_uoms:
-            logger.warning(
-                f"UOM '{uom}' not found in tenant's available UOMs: {available_uoms}. "
-                "This may cause an API error."
-            )
-        payload_data["UOM"] = uom
+        if available_uoms:
+            normalized_uom, was_corrected = _normalize_uom(uom, available_uoms)
+            if was_corrected:
+                defaults_applied.append(
+                    {
+                        "field": "UOM",
+                        "value": f"{normalized_uom} (corrected from '{uom}')",
+                    }
+                )
+            payload_data["UOM"] = normalized_uom
+        else:
+            # No tenant UOMs available - use as-is
+            payload_data["UOM"] = uom
 
     # Determine charge model type for special handling
     normalized_charge_model = payload_data.get("ChargeModel", "")
