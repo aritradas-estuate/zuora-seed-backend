@@ -6,6 +6,8 @@ import json
 import logging
 import uuid
 
+import jellyfish
+
 logger = logging.getLogger(__name__)
 from .models import ProductSpec, ZuoraApiType
 from .zuora_client import get_zuora_client
@@ -661,10 +663,10 @@ def connect_to_zuora() -> str:
 
 
 @tool
-def list_zuora_products(page_size: int = 20) -> str:
-    """List products from Zuora Catalog."""
+def list_zuora_products() -> str:
+    """List the last 20 products from Zuora Catalog (sorted by most recently updated)."""
     client = get_zuora_client()
-    result = client.list_all_products(page_size=page_size)
+    result = client.list_all_products(page_size=20)
 
     if not result.get("success"):
         return f"❌ Error listing products: {result.get('error', 'Unknown error')}"
@@ -674,7 +676,7 @@ def list_zuora_products(page_size: int = 20) -> str:
     if not products:
         return "No products found in the catalog."
 
-    output = f"Found {len(products)} product(s) in the catalog:\n\n"
+    output = f"**Last {len(products)} product(s) in the catalog** (most recently updated first):\n\n"
     for p in products:
         output += f"• **{p.get('name', 'N/A')}**\n"
         output += f"  - ID: {p.get('id', 'N/A')}\n"
@@ -684,38 +686,77 @@ def list_zuora_products(page_size: int = 20) -> str:
     return output
 
 
-@tool
-def get_zuora_product(
-    identifier: str, identifier_type: Literal["id", "name", "sku"] = "name"
-) -> str:
-    """Get product details by ID, name, or SKU."""
-    client = get_zuora_client()
+def _find_best_product_match(
+    products: List[Dict[str, Any]], search_term: str, search_field: str
+) -> Dict[str, Any]:
+    """
+    Find best matching product using Damerau-Levenshtein distance.
 
-    if identifier_type == "id":
-        result = client.get_product(identifier)
-    else:
-        # Search by name or SKU
-        result = client.list_all_products(page_size=100)
-        if result.get("success"):
-            products = result.get("data", {}).get("products", [])
-            search_field = "name" if identifier_type == "name" else "sku"
-            matching = [
-                p
-                for p in products
-                if p.get(search_field, "").lower() == identifier.lower()
-            ]
-            if matching:
-                # Get full product details
-                result = client.get_product(matching[0]["id"])
-            else:
-                return f"❌ No product found with {identifier_type} = '{identifier}'"
+    Args:
+        products: List of product dictionaries
+        search_term: The term to search for
+        search_field: Field to search in ('name' or 'sku')
 
-    if not result.get("success"):
-        return f"❌ Error retrieving product: {result.get('error', 'Unknown error')}"
+    Returns:
+        Dict with 'type' ('exact', 'fuzzy', or 'none'), 'matches' list,
+        and 'distances' dict mapping product IDs to their distances
+    """
+    search_lower = search_term.lower()
 
-    product = result.get("data", {})
+    # First check for exact match (case-insensitive)
+    for p in products:
+        if p.get(search_field, "").lower() == search_lower:
+            return {"type": "exact", "matches": [p], "distances": {p.get("id"): 0}}
 
-    output = f"**Product: {product.get('name', 'N/A')}**\n\n"
+    # No exact match - find closest using Damerau-Levenshtein distance
+    matches_with_distance: List[Tuple[Dict[str, Any], int]] = []
+    for p in products:
+        field_value = p.get(search_field, "")
+        if not field_value:
+            continue
+        distance = jellyfish.damerau_levenshtein_distance(
+            search_lower, field_value.lower()
+        )
+        matches_with_distance.append((p, distance))
+
+    if not matches_with_distance:
+        return {"type": "none", "matches": [], "distances": {}}
+
+    # Sort by distance (ascending)
+    matches_with_distance.sort(key=lambda x: x[1])
+
+    # Get best distance
+    best_distance = matches_with_distance[0][1]
+
+    # Get all products with the best distance, plus close alternatives (within +1)
+    close_matches = [
+        (m, d) for m, d in matches_with_distance if d <= best_distance + 1
+    ][:3]
+
+    return {
+        "type": "fuzzy",
+        "matches": [m for m, d in close_matches],
+        "distances": {m.get("id"): d for m, d in close_matches},
+    }
+
+
+def _format_product_details(product: Dict[str, Any], match_info: str = "") -> str:
+    """
+    Format product details for display.
+
+    Args:
+        product: Product dictionary from Zuora API
+        match_info: Optional match info string (e.g., "(exact match)" or "(distance: 1)")
+
+    Returns:
+        Formatted product details string
+    """
+    header = f"**Product: {product.get('name', 'N/A')}**"
+    if match_info:
+        header += f" {match_info}"
+    header += "\n\n"
+
+    output = header
     output += f"• Product ID: {product.get('id', 'N/A')}\n"
     output += f"• SKU: {product.get('sku', 'N/A')}\n"
     output += f"• Description: {product.get('description', 'N/A')}\n"
@@ -742,7 +783,89 @@ def get_zuora_product(
                         price_info = pricing[0]
                         output += f"         Price: {price_info.get('currency', '')} {price_info.get('price', 'N/A')}\n"
 
-    output += "\nWould you like to view more details or update any attribute?"
+    return output
+
+
+@tool
+def get_zuora_product(
+    identifier: str, identifier_type: Literal["id", "name", "sku"] = "name"
+) -> str:
+    """
+    Get product details by ID, name, or SKU.
+
+    Uses fuzzy matching (Damerau-Levenshtein distance) for name/SKU searches
+    to find the closest match even with typos or partial names.
+    """
+    client = get_zuora_client()
+
+    if identifier_type == "id":
+        # Direct lookup by ID - no fuzzy matching needed
+        result = client.get_product(identifier)
+        if not result.get("success"):
+            return (
+                f"❌ Error retrieving product: {result.get('error', 'Unknown error')}"
+            )
+
+        product = result.get("data", {})
+        output = _format_product_details(product)
+        output += "\nWould you like to view more details or update any attribute?"
+        return output
+
+    # Search by name or SKU with fuzzy matching
+    result = client.list_all_products(page_size=100)
+    if not result.get("success"):
+        return f"❌ Error listing products: {result.get('error', 'Unknown error')}"
+
+    products = result.get("data", {}).get("products", [])
+    if not products:
+        return "❌ No products found in the catalog."
+
+    search_field = "name" if identifier_type == "name" else "sku"
+    match_result = _find_best_product_match(products, identifier, search_field)
+
+    if match_result["type"] == "none":
+        return f"❌ No products found matching {identifier_type} = '{identifier}'"
+
+    if match_result["type"] == "exact":
+        # Exact match found - get full product details
+        matched_product = match_result["matches"][0]
+        full_result = client.get_product(matched_product["id"])
+        if not full_result.get("success"):
+            return f"❌ Error retrieving product: {full_result.get('error', 'Unknown error')}"
+
+        product = full_result.get("data", {})
+        output = _format_product_details(product)
+        output += "\nWould you like to view more details or update any attribute?"
+        return output
+
+    # Fuzzy match - show best match with confirmation question
+    matches = match_result["matches"]
+    distances = match_result["distances"]
+
+    if len(matches) == 1:
+        # Single best match
+        matched_product = matches[0]
+        distance = distances.get(matched_product.get("id"), "?")
+        full_result = client.get_product(matched_product["id"])
+
+        if not full_result.get("success"):
+            return f"❌ Error retrieving product: {full_result.get('error', 'Unknown error')}"
+
+        product = full_result.get("data", {})
+        output = f"No exact match for '{identifier}'. Closest match found:\n\n"
+        output += _format_product_details(product, f"(distance: {distance})")
+        output += "\nIs this the product you were looking for?"
+        return output
+
+    # Multiple matches with similar distances - show options
+    output = f"No exact match for '{identifier}'. Multiple similar products found:\n\n"
+    for i, match in enumerate(matches, 1):
+        distance = distances.get(match.get("id"), "?")
+        output += f"{i}. **{match.get('name', 'N/A')}** (SKU: {match.get('sku', 'N/A')}, distance: {distance})\n"
+
+    output += (
+        "\nPlease specify which product you'd like to view, or provide more details."
+    )
     return output
 
 

@@ -22,4 +22,5 @@ dependencies = [
     "aws-opentelemetry-distro>=0.5.0",
     "urllib3>=1.26.0,<2.0.0",
     "cachetools>=5.3.0",
+    "jellyfish>=1.0.0",
 ]
