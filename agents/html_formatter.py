@@ -446,6 +446,42 @@ def highlight_placeholders_in_json(json_str: str) -> str:
     return styled
 
 
+def format_defaults_applied_html(defaults: List[Dict[str, str]]) -> str:
+    """
+    Generate HTML table showing defaults that were applied.
+
+    Args:
+        defaults: List of dicts with 'field' and 'value' keys
+
+    Returns:
+        HTML string with styled defaults table, or empty string if no defaults
+    """
+    if not defaults:
+        return ""
+
+    rows = "\n".join(
+        f'<tr><td style="border: 1px solid #ccc; padding: 5px;">{d["field"]}</td>'
+        f'<td style="border: 1px solid #ccc; padding: 5px;">{d["value"]}</td></tr>'
+        for d in defaults
+    )
+
+    return f"""<p><strong>Defaults Applied:</strong></p>
+<div style="overflow-x: auto;">
+<table style="border: 1px solid #ccc; border-collapse: collapse; margin-bottom: 12px;">
+<thead>
+<tr>
+<th style="border: 1px solid #ccc; padding: 5px; background-color: #f5f5f5;">Defaulted Field</th>
+<th style="border: 1px solid #ccc; padding: 5px; background-color: #f5f5f5;">Defaulted Value</th>
+</tr>
+</thead>
+<tbody>
+{rows}
+</tbody>
+</table>
+</div>
+"""
+
+
 def generate_placeholder_warning_html(
     payloads_with_placeholders: List[Dict[str, Any]],
 ) -> str:

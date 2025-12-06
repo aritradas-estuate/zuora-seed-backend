@@ -178,6 +178,18 @@ def get_available_currencies() -> List[str]:
     return []
 
 
+def get_default_currency() -> str:
+    """
+    Get the default currency from Zuora environment settings.
+
+    Returns the first active currency from the tenant, or "USD" as fallback.
+    """
+    currencies = get_available_currencies()
+    if currencies:
+        return currencies[0]
+    return "USD"
+
+
 def get_available_uoms() -> List[Dict[str, Any]]:
     """Get list of units of measure defined in this Zuora tenant.
 

@@ -525,12 +525,27 @@ def update_payload(
 
 @tool(context=True)
 def create_payload(
-    tool_context: ToolContext, api_type: str, payload_data: Dict[str, Any]
+    tool_context: ToolContext,
+    api_type: str,
+    payload_data: Dict[str, Any],
+    defaults_applied: Optional[List[Dict[str, str]]] = None,
 ) -> str:
-    """Create new Zuora payload with validation. Generates placeholders for missing required fields."""
+    """Create new Zuora payload with validation. Generates placeholders for missing required fields.
+
+    Args:
+        tool_context: Tool context for accessing agent state
+        api_type: Type of Zuora API payload (e.g., 'product_create', 'charge_create')
+        payload_data: Dictionary of payload fields and values
+        defaults_applied: Optional list of defaults that were applied, each with 'field' and 'value' keys.
+                         This is used internally by create_product/create_rate_plan/create_charge.
+
+    Returns:
+        HTML-formatted string with creation result and any defaults that were applied
+    """
     from .html_formatter import (
         generate_reference_documentation,
         format_payload_with_references,
+        format_defaults_applied_html,
     )
     from .validation_schemas import (
         generate_placeholder_payload,
@@ -581,9 +596,14 @@ def create_payload(
     # Generate output
     if placeholder_list:
         # Return warning about placeholders (with index info)
-        return format_placeholder_warning(
+        # Include defaults table if any defaults were applied
+        output = ""
+        if defaults_applied:
+            output += format_defaults_applied_html(defaults_applied)
+        output += format_placeholder_warning(
             api_type, placeholder_list, new_payload, current_index, same_type_count
         )
+        return output
     else:
         # Generate concise success output (no JSON)
         friendly_type = (
@@ -597,6 +617,11 @@ def create_payload(
         )
 
         output = f'Created <strong>{friendly_type}</strong>: "{payload_name}"<br><br>'
+
+        # Add defaults table if any defaults were applied
+        if defaults_applied:
+            output += format_defaults_applied_html(defaults_applied)
+
         output += "All required fields are set.<br>"
 
         return output
@@ -1061,10 +1086,19 @@ def create_product(
     # Build product payload with provided values - use PascalCase for Zuora v1 CRUD API
     payload_data = {"Name": name}
 
+    # Track defaults applied for transparency
+    defaults_applied: List[Dict[str, str]] = []
+
     # Apply smart defaults for common fields
     if not effective_start_date:
         # Default to today if not provided
         effective_start_date = datetime.now().strftime("%Y-%m-%d")
+        defaults_applied.append(
+            {
+                "field": "EffectiveStartDate",
+                "value": f"{effective_start_date} (today)",
+            }
+        )
 
     # Validate date format if provided
     if effective_start_date:
@@ -1081,6 +1115,12 @@ def create_product(
         start_dt = datetime.strptime(effective_start_date, "%Y-%m-%d")
         end_dt = start_dt + relativedelta(years=10)
         effective_end_date = end_dt.strftime("%Y-%m-%d")
+        defaults_applied.append(
+            {
+                "field": "EffectiveEndDate",
+                "value": f"{effective_end_date} (10 years from start)",
+            }
+        )
 
     if effective_end_date:
         if not validate_date_format(effective_end_date):
@@ -1122,7 +1162,9 @@ def create_product(
         warnings.append(unique_warning)
 
     # Delegate to create_payload which handles placeholders and validation
-    result = create_payload(tool_context, "product_create", payload_data)
+    result = create_payload(
+        tool_context, "product_create", payload_data, defaults_applied=defaults_applied
+    )
 
     # Prepend warnings if any
     if warnings:
@@ -1163,6 +1205,9 @@ def create_rate_plan(
     # Build rate plan payload with provided values
     payload_data = {}
 
+    # Track defaults applied for transparency
+    defaults_applied: List[Dict[str, str]] = []
+
     # Handle ProductId - use PascalCase for Zuora v1 CRUD API
     if product_id:
         # Validate if it's a real Zuora ID or object reference
@@ -1181,6 +1226,12 @@ def create_rate_plan(
         object_ref = _get_product_object_reference(payloads)
         if object_ref:
             payload_data["ProductId"] = object_ref
+            defaults_applied.append(
+                {
+                    "field": "ProductId",
+                    "value": f"{object_ref} (auto-linked to product in batch)",
+                }
+            )
         # If no object_ref, ProductId will be missing and create_payload will add a placeholder
 
     if name:
@@ -1232,7 +1283,12 @@ def create_rate_plan(
             warnings.append(unique_warning)
 
     # Delegate to create_payload which handles placeholders and validation
-    result = create_payload(tool_context, "rate_plan_create", payload_data)
+    result = create_payload(
+        tool_context,
+        "rate_plan_create",
+        payload_data,
+        defaults_applied=defaults_applied,
+    )
 
     # Prepend warnings if any
     if warnings:
@@ -1453,6 +1509,36 @@ def _infer_charge_model_conservative(
     return None
 
 
+def _get_charge_model_inference_reason(
+    charge_type: Optional[str],
+    price: Optional[float],
+    uom: Optional[str],
+    tiers: Optional[List[Dict[str, Any]]],
+    included_units: Optional[float],
+) -> Optional[str]:
+    """
+    Get human-readable reason for charge model inference.
+
+    Returns a description of why the charge model was inferred,
+    or None if the model was not inferred (was explicitly provided).
+    """
+    if tiers and len(tiers) > 1:
+        if included_units is not None:
+            return "inferred: multiple tiers + included units"
+        return "inferred: multiple tiers provided"
+
+    if included_units is not None and (not tiers or len(tiers) <= 1):
+        return "inferred: included units without tiers"
+
+    if charge_type == "Usage" and uom and not tiers:
+        return "inferred: usage charge with UOM"
+
+    if charge_type in ("Recurring", "OneTime") and price is not None and not uom:
+        return "inferred: fixed price, no UOM"
+
+    return None
+
+
 @tool(context=True)
 def create_charge(
     tool_context: ToolContext,
@@ -1623,6 +1709,13 @@ def create_charge(
     # Build charge payload with provided values - use PascalCase for Zuora v1 CRUD API
     payload_data = {}
 
+    # Track defaults applied for transparency
+    defaults_applied: List[Dict[str, str]] = []
+
+    # Track if user provided currency explicitly (vs using default parameter)
+    # We check if currency differs from default "USD" - if same, it might be defaulted
+    user_provided_currency = currency != "USD"
+
     # Handle ProductRatePlanId
     if rate_plan_id:
         if not validate_zuora_id(rate_plan_id):
@@ -1642,6 +1735,12 @@ def create_charge(
         object_ref = _get_rate_plan_object_reference(payloads)
         if object_ref:
             payload_data["ProductRatePlanId"] = object_ref
+            defaults_applied.append(
+                {
+                    "field": "ProductRatePlanId",
+                    "value": f"{object_ref} (auto-linked to rate plan in batch)",
+                }
+            )
         # If no object_ref, ProductRatePlanId will be missing and create_payload will add a placeholder
 
     if name:
@@ -1665,6 +1764,22 @@ def create_charge(
         )
         if inferred_model:
             payload_data["ChargeModel"] = inferred_model
+            # Get inference reason for transparency
+            reason = _get_charge_model_inference_reason(
+                charge_type=charge_type,
+                price=price,
+                uom=uom,
+                tiers=tiers,
+                included_units=included_units,
+            )
+            defaults_applied.append(
+                {
+                    "field": "ChargeModel",
+                    "value": f"{inferred_model} ({reason})"
+                    if reason
+                    else inferred_model,
+                }
+            )
 
     # Required fields with smart defaults (per Zuora v1 API)
     payload_data["BillCycleType"] = bill_cycle_type
@@ -1676,8 +1791,20 @@ def create_charge(
         payload_data["BillingTiming"] = billing_timing
     elif charge_type == "Usage":
         payload_data["BillingTiming"] = "In Arrears"
+        defaults_applied.append(
+            {
+                "field": "BillingTiming",
+                "value": "In Arrears (usage charges billed after consumption)",
+            }
+        )
     else:
         payload_data["BillingTiming"] = "In Advance"
+        defaults_applied.append(
+            {
+                "field": "BillingTiming",
+                "value": "In Advance",
+            }
+        )
 
     if description:
         payload_data["Description"] = description
@@ -1717,6 +1844,32 @@ def create_charge(
     ):
         # Auto-set RatingGroup for tiered/volume/overage usage charges
         payload_data["RatingGroup"] = "ByBillingPeriod"
+        defaults_applied.append(
+            {
+                "field": "RatingGroup",
+                "value": "ByBillingPeriod (auto-set for tiered/volume usage)",
+            }
+        )
+
+    # Track currency default if user didn't explicitly provide it
+    if not user_provided_currency:
+        from .zuora_settings import get_default_currency
+
+        tenant_default = get_default_currency()
+        if currency == tenant_default:
+            defaults_applied.append(
+                {
+                    "field": "Currency",
+                    "value": f"{currency} (tenant default)",
+                }
+            )
+        else:
+            defaults_applied.append(
+                {
+                    "field": "Currency",
+                    "value": currency,
+                }
+            )
 
     # Collect warnings (tier validation warnings will be added here)
     warnings = []
@@ -1830,7 +1983,9 @@ def create_charge(
 
     # Delegate to create_payload which handles placeholders and validation
     # It will add placeholders for conditionally required fields based on ChargeType
-    result = create_payload(tool_context, "charge_create", payload_data)
+    result = create_payload(
+        tool_context, "charge_create", payload_data, defaults_applied=defaults_applied
+    )
 
     # Prepend warnings if any
     if warnings:
