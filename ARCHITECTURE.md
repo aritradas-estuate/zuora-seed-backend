@@ -1,38 +1,8 @@
-# CLAUDE.md
+# ARCHITECTURE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Architecture and design documentation for the Zuora Seed Agent.
 
-## Build & Run Commands
-
-```bash
-# Install dependencies
-uv sync
-
-# Run the agent locally
-bedrock-agentcore run local
-
-# Run tests interactively
-python test_agent.py
-
-# Run specific test
-python test_agent.py ba1          # Single test by key
-python test_agent.py a            # All PM tests
-python test_agent.py z            # All Zuora API tests
-python test_agent.py b            # All Billing Architect tests
-
-# Deploy to AWS
-bedrock-agentcore deploy
-```
-
-## Environment Configuration
-
-Copy `.env.example` to `.env` and configure:
-- `GEN_MODEL_ID` - Bedrock model ID (default: `us.meta.llama3-3-70b-instruct-v1:0`)
-- `ZUORA_CLIENT_ID` / `ZUORA_CLIENT_SECRET` - Zuora OAuth credentials
-- `ZUORA_ENV` - Environment: `sandbox`, `test`, `production`, `eu-sandbox`, `eu-production`
-- `MAX_CONVERSATION_TURNS` - Conversation history limit (default: `3`) - see Conversation Management section below
-
-## Architecture
+## Overview
 
 ### Framework Stack
 - **AWS Bedrock AgentCore** - Deployment and runtime infrastructure
