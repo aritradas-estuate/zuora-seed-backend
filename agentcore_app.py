@@ -490,6 +490,14 @@ def invoke(payload: dict) -> dict:
                 )
                 answer = placeholder_warning + answer
 
+            # Add call-to-action at the end when payloads exist
+            if modified_payloads_data:
+                from agents.html_formatter import generate_payload_action_cta
+
+                has_placeholders = len(payloads_with_placeholders) > 0
+                action_cta = generate_payload_action_cta(has_placeholders)
+                answer = answer + action_cta
+
             # Generate persona-specific citations (content-aware based on user message)
             citations = generate_mock_citations(persona, request.message)
 

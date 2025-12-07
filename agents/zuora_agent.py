@@ -31,6 +31,8 @@ from .tools import (
     update_zuora_product,
     update_zuora_rate_plan,
     update_zuora_charge,
+    # Zuora API tools (expire - payload generation)
+    expire_product,
     # Billing Architect advisory tools
     generate_prepaid_config,
     generate_workflow_config,
@@ -222,6 +224,44 @@ When creating multiple related objects in one request (Product → Rate Plan →
 - For existing Zuora objects, provide the actual Zuora ID (e.g., "8a1234567890abcd")
 - **NEVER use internal payload_id values** (like "b90ed37c") as foreign keys - always use object references or real Zuora IDs
 
+## Expire Product Workflow
+
+When a user wants to expire (end-date) a product:
+
+### Step 1: Identify the Product
+- Ask: "How would you like to identify the product — by Product Name, Product ID, or SKU?"
+- Use `get_zuora_product` to find and display the product details
+- Show: Product Name, Product ID, SKU, Current Effective Start/End dates, and list of Rate Plans
+
+### Step 2: Confirm Product
+- Show the product details and ask: "Is this the product you want to expire?"
+- If the user says no, help them find the correct one
+
+### Step 3: Choose Expiration Method
+- Ask: "How would you like to expire this product?"
+  1. Expire immediately (today's date)
+  2. Set a specific end date
+  3. Schedule expiration for a future date
+- For options 2 and 3, ask for the date in YYYY-MM-DD format
+
+### Step 4: Generate Payloads
+- Once you have the product_id and new_end_date, call `expire_product` immediately
+- Use `get_current_date` if the user chooses immediate expiration
+- The tool generates update payloads for the product AND all associated rate plans
+- Show the summary to the user
+
+### Step 5: Review and Send
+- Display the summary showing:
+  - Product name and new end date
+  - Rate plans that will be expired
+- Direct user to review payloads on the right and Send to Zuora
+
+**Important Notes:**
+- Rate plans are automatically expired along with the product (cascade)
+- Only rate plans with end dates after the new product end date will be updated
+- Existing subscriptions are NOT affected by product/rate plan expiration
+- If a past date is provided, warn the user but proceed if they confirm
+
 ## Response Style
 - Be concise. Keep responses short and conversational.
 - NEVER show JSON or raw payloads to users - payloads are stored internally.
@@ -231,10 +271,6 @@ When creating multiple related objects in one request (Product → Rate Plan →
 - Use HTML: <h3> for sections, <strong> for key terms, <ol>/<ul> for lists.
 
 ## Payload Review Guidance
-After every response where payloads are created or modified, include a brief reminder:
-- Tell users to review the generated payload on the right side of the screen
-- If the configuration looks correct, they can send it to Zuora
-- This guidance should feel natural and conversational, not robotic
 
 ## Default Values (Apply these automatically)
 - EffectiveStartDate: Today (YYYY-MM-DD). Currency: USD. Billing: In Advance, Month.
@@ -262,7 +298,6 @@ When ALL placeholders are filled and payloads are complete, you MUST provide a c
 | Monthly Base Fee | Recurring | Flat Fee | $49/month | Monthly |
 | API Calls | Usage | Tiered | 10k included, $0.003/call after | Monthly |
 <br>
-**Review payload on the Right and proceed to Send to Zuora**<br>
 
 Remember: EFFICIENCY is paramount. Every tool call costs time and money. Plan first, execute once.
 """
@@ -383,6 +418,8 @@ PROJECT_MANAGER_TOOLS = [
     update_zuora_product,
     update_zuora_rate_plan,
     update_zuora_charge,
+    # Expire operations (payload generation)
+    expire_product,
     # Payload manipulation
     update_payload,
     create_payload,

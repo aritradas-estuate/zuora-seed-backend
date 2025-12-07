@@ -1106,6 +1106,204 @@ This payload has been added to the response. Execute it via the Zuora API to app
 ⚠️ Note: Charge Model and Charge Type CANNOT be changed if used in existing subscriptions."""
 
 
+# ============ Product Expiration Tool ============
+
+
+@tool(context=True)
+def expire_product(
+    tool_context: ToolContext,
+    product_id: str,
+    new_end_date: str,
+    expire_rate_plans: bool = True,
+) -> str:
+    """
+    Expire a product by setting its effective end date, with cascade to rate plans.
+
+    Generates update payloads for:
+    1. The product (sets EffectiveEndDate)
+    2. All associated rate plans whose end date is after the new end date (if expire_rate_plans=True)
+
+    IMPORTANT: Call get_zuora_product first to verify the product exists and show
+    the user its current details before calling this tool.
+
+    Args:
+        product_id: Zuora Product ID (e.g., '8a8080...' or '2c92c0f...')
+        new_end_date: New effective end date in YYYY-MM-DD format.
+                     Use today's date for immediate expiration.
+        expire_rate_plans: Whether to also expire all rate plans (default: True)
+
+    Returns:
+        Summary of generated payloads and affected entities
+    """
+    import datetime as dt
+
+    logger.info(
+        f"[TOOL CALL] expire_product: product_id={product_id}, "
+        f"new_end_date={new_end_date}, expire_rate_plans={expire_rate_plans}"
+    )
+
+    # 1. Validate date format
+    if not validate_date_format(new_end_date):
+        return format_error_message(
+            "Invalid date format",
+            f"new_end_date must be YYYY-MM-DD format (e.g., 2024-12-31), got: {new_end_date}",
+        )
+
+    # 2. Fetch product details from Zuora
+    client = get_zuora_client()
+    result = client.get_product(product_id)
+
+    if not result.get("success"):
+        error_msg = result.get("error", "Unknown error")
+        details = result.get("details", {})
+        if details:
+            error_msg += f" - {details}"
+        return f"❌ **Error retrieving product:** {error_msg}\n\nPlease verify the product ID is correct."
+
+    product = result.get("data", {})
+    product_name = product.get("name", "Unknown")
+    product_sku = product.get("sku", "N/A")
+    current_start = product.get("effectiveStartDate")
+    current_end = product.get("effectiveEndDate")
+    rate_plans = product.get("productRatePlans", [])
+
+    # 3. Validate new_end_date >= start_date
+    if current_start and new_end_date < current_start:
+        return format_error_message(
+            "Invalid end date",
+            f"End date ({new_end_date}) cannot be before product start date ({current_start})",
+        )
+
+    # 4. Check if product is already expired
+    today = dt.datetime.now().strftime("%Y-%m-%d")
+    warnings = []
+
+    if current_end and current_end < today:
+        return f"""ℹ️ **Product Already Expired**
+
+**Product:** {product_name}
+**Product ID:** `{product_id}`
+**Current End Date:** {current_end}
+
+This product is already expired. No changes needed.
+
+If you want to extend the product, use `update_zuora_product` to set a new end date."""
+
+    # 5. Warn if new_end_date is in the past (but allow it)
+    if new_end_date < today:
+        warnings.append(
+            f"⚠️ **Warning:** New end date ({new_end_date}) is in the past. "
+            "This will backdate the expiration."
+        )
+
+    # 6. Generate product update payload
+    payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
+
+    product_payload = {
+        "payload": {
+            "method": "PUT",
+            "endpoint": f"/v1/object/product/{product_id}",
+            "body": {"EffectiveEndDate": new_end_date},
+        },
+        "zuora_api_type": "product_update",
+        "payload_id": str(uuid.uuid4())[:8],
+    }
+    payloads.append(product_payload)
+
+    # 7. Generate rate plan update payloads (if cascade)
+    rate_plans_to_expire: List[Dict[str, Any]] = []
+    rate_plans_skipped: List[Dict[str, Any]] = []
+
+    if expire_rate_plans and rate_plans:
+        for rp in rate_plans:
+            rp_id = rp.get("id")
+            rp_name = rp.get("name", "Unknown")
+            rp_current_end = rp.get("effectiveEndDate")
+
+            # Only update if rate plan's end date is after the new product end date
+            if rp_current_end and rp_current_end > new_end_date:
+                rp_payload = {
+                    "payload": {
+                        "method": "PUT",
+                        "endpoint": f"/v1/object/product-rate-plan/{rp_id}",
+                        "body": {"EffectiveEndDate": new_end_date},
+                    },
+                    "zuora_api_type": "rate_plan_update",
+                    "payload_id": str(uuid.uuid4())[:8],
+                }
+                payloads.append(rp_payload)
+                rate_plans_to_expire.append(
+                    {
+                        "name": rp_name,
+                        "id": rp_id,
+                        "current_end": rp_current_end,
+                        "new_end": new_end_date,
+                    }
+                )
+            else:
+                rate_plans_skipped.append(
+                    {
+                        "name": rp_name,
+                        "current_end": rp_current_end or "N/A",
+                        "reason": "Already expires on or before new date",
+                    }
+                )
+
+    # 8. Save payloads to state
+    tool_context.agent.state.set(PAYLOADS_STATE_KEY, payloads)
+
+    # 9. Build response
+    output = "## Product Expiration Payloads Generated\n\n"
+
+    # Show warnings first
+    if warnings:
+        for w in warnings:
+            output += f"{w}\n\n"
+
+    # Product summary
+    output += f"**Product:** {product_name}\n"
+    output += f"- Product ID: `{product_id}`\n"
+    output += f"- SKU: {product_sku}\n"
+    output += f"- Current Effective End: {current_end}\n"
+    output += f"- **New Effective End: {new_end_date}**\n\n"
+
+    # Rate plans summary
+    if rate_plans_to_expire:
+        output += f"**Rate Plans to Expire ({len(rate_plans_to_expire)}):**\n\n"
+        output += "| Rate Plan | Current End | New End |\n"
+        output += "|-----------|-------------|----------|\n"
+        for rp in rate_plans_to_expire:
+            output += f"| {rp['name']} | {rp['current_end']} | {rp['new_end']} |\n"
+        output += "\n"
+
+    if rate_plans_skipped:
+        output += f"**Rate Plans Unchanged ({len(rate_plans_skipped)}):**\n"
+        for rp in rate_plans_skipped:
+            output += f"- {rp['name']} (ends {rp['current_end']} - {rp['reason']})\n"
+        output += "\n"
+
+    if not rate_plans:
+        output += "**Rate Plans:** None associated with this product.\n\n"
+
+    # Payload count
+    total_payloads = 1 + len(rate_plans_to_expire)
+    rp_text = (
+        f" + {len(rate_plans_to_expire)} rate plan(s)" if rate_plans_to_expire else ""
+    )
+    output += f"**Payloads Generated:** {total_payloads} (1 product{rp_text})\n\n"
+
+    # Instructions
+    output += "---\n\n"
+    output += (
+        "✅ **Review the payloads on the right, then Send to Zuora to apply.**\n\n"
+    )
+    output += (
+        "⚠️ **Note:** Existing subscriptions will not be affected by this change.\n"
+    )
+
+    return output
+
+
 # ============ Product/Rate Plan/Charge Creation Tools (Payload Generation) ============
 
 

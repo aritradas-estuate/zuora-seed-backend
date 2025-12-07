@@ -551,3 +551,19 @@ def generate_placeholder_warning_html(
 </table>
 </div>
 """
+
+
+def generate_payload_action_cta(has_placeholders: bool) -> str:
+    """
+    Generate the call-to-action text for payload review.
+
+    Args:
+        has_placeholders: Whether any payloads have placeholder values
+
+    Returns:
+        HTML string with styled call-to-action
+    """
+    if has_placeholders:
+        return "<p><strong>Review payload on the Right</strong></p>"
+    else:
+        return "<p><strong>Review payload on the Right</strong> and proceed to <strong>Send to Zuora</strong></p>"
