@@ -3,12 +3,15 @@ from typing import List, Dict, Any, TYPE_CHECKING
 import uuid
 import time
 import random
+import logging
 from agents.observability import (
     initialize_observability,
     get_tracer,
     get_metrics_collector,
     trace_function,
 )
+
+logger = logging.getLogger(__name__)
 
 # Lazy imports - these are slow due to strands library
 # Only import when actually needed (inside invoke function)
@@ -388,6 +391,55 @@ def invoke(payload: dict) -> dict:
                 metrics.record_agent_invocation(
                     persona, invoke_duration_ms, success=True
                 )
+
+                # Log tool usage for debugging - check if response has tool call info
+                # This helps diagnose when the model describes actions without calling tools
+                if hasattr(response, "tool_calls"):
+                    tool_names = (
+                        [tc.get("name", "unknown") for tc in response.tool_calls]
+                        if response.tool_calls
+                        else []
+                    )
+                    logger.info(
+                        f"[AGENT] Tools called: {tool_names if tool_names else 'none'}"
+                    )
+                elif hasattr(response, "message") and hasattr(
+                    response.message, "tool_calls"
+                ):
+                    tool_names = (
+                        [
+                            tc.get("name", "unknown")
+                            for tc in response.message.tool_calls
+                        ]
+                        if response.message.tool_calls
+                        else []
+                    )
+                    logger.info(
+                        f"[AGENT] Tools called: {tool_names if tool_names else 'none'}"
+                    )
+                else:
+                    # Log response length as a proxy for whether tools were called
+                    # Very short responses with phrases like "I'll update" may indicate no tool was called
+                    raw_answer_preview = str(response)[:200]
+                    intent_phrases = [
+                        "I'll update",
+                        "Let me set",
+                        "I'll change",
+                        "Updating",
+                        "I will update",
+                        "Let me update",
+                    ]
+                    has_intent_phrase = any(
+                        phrase in raw_answer_preview for phrase in intent_phrases
+                    )
+                    if has_intent_phrase:
+                        logger.warning(
+                            f"[AGENT] Response contains intent phrases but tool call info not available. "
+                            f"Preview: {raw_answer_preview}..."
+                        )
+                    logger.info(
+                        f"[AGENT] Invocation completed in {invoke_duration_ms:.0f}ms"
+                    )
 
                 raw_answer = str(response)
                 # Convert markdown to HTML for formatted output

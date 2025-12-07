@@ -115,7 +115,7 @@ MAX_CONVERSATION_TURNS=3  # Conversation history limit
 
 ## Documentation
 
-See [CLAUDE.md](CLAUDE.md) for detailed architecture, implementation notes, and development guidance.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed architecture and design documentation.
 
 ## Testing
 

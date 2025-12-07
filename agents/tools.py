@@ -339,6 +339,12 @@ def update_payload(
         payload_name: Name of the payload (case-insensitive substring match, e.g., 'API Calls' matches 'API Calls Usage')
         payload_index: Index among payloads of same type (0=first, 1=second)
     """
+    # Entry logging for debugging tool call issues
+    logger.info(
+        f"[TOOL CALL] update_payload: api_type={api_type}, field_path={field_path}, "
+        f"new_value={new_value}, payload_name={payload_name}, payload_id={payload_id}, payload_index={payload_index}"
+    )
+
     payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
 
     # Find matching payloads by api_type
@@ -546,6 +552,11 @@ def update_payload(
         response += f"Still needs: {', '.join(remaining)}"
     else:
         response += "All fields complete - ready to execute."
+
+    # Exit logging for debugging
+    logger.info(
+        f"[TOOL DONE] update_payload: successfully updated {actual_key} in {friendly_type} '{payload_name}'"
+    )
 
     return response
 
@@ -1116,6 +1127,12 @@ def create_product(
 
     Uses PascalCase field names to match Zuora v1 CRUD API.
     """
+    # Entry logging for debugging tool call issues
+    logger.info(
+        f"[TOOL CALL] create_product: name={name}, sku={sku}, "
+        f"effective_start_date={effective_start_date}, effective_end_date={effective_end_date}"
+    )
+
     from datetime import datetime
     from dateutil.relativedelta import relativedelta
 
@@ -1238,6 +1255,12 @@ def create_rate_plan(
         effective_start_date: Start date (YYYY-MM-DD)
         effective_end_date: End date (YYYY-MM-DD)
     """
+    # Entry logging for debugging tool call issues
+    logger.info(
+        f"[TOOL CALL] create_rate_plan: name={name}, product_id={product_id}, "
+        f"product_index={product_index}"
+    )
+
     # Build rate plan payload with provided values
     payload_data = {}
 
@@ -1268,7 +1291,15 @@ def create_rate_plan(
                     "value": f"{object_ref} (auto-linked to product in batch)",
                 }
             )
-        # If no object_ref, ProductId will be missing and create_payload will add a placeholder
+        else:
+            # Default to first product in batch (index 0) - mandatory for batch creation
+            payload_data["ProductId"] = "@{Product[0].Id}"
+            defaults_applied.append(
+                {
+                    "field": "ProductId",
+                    "value": "@{Product[0].Id} (auto-linked to first product in batch)",
+                }
+            )
 
     if name:
         payload_data["Name"] = name
@@ -1818,6 +1849,13 @@ def create_charge(
             overage_price=0.05,     # $0.05/GB after 1000 GB
         )
     """
+    # Entry logging for debugging tool call issues
+    logger.info(
+        f"[TOOL CALL] create_charge: name={name}, charge_type={charge_type}, "
+        f"charge_model={charge_model}, price={price}, billing_period={billing_period}, "
+        f"rate_plan_id={rate_plan_id}, rate_plan_index={rate_plan_index}"
+    )
+
     # Build charge payload with provided values - use PascalCase for Zuora v1 CRUD API
     payload_data = {}
 
@@ -1853,7 +1891,15 @@ def create_charge(
                     "value": f"{object_ref} (auto-linked to rate plan in batch)",
                 }
             )
-        # If no object_ref, ProductRatePlanId will be missing and create_payload will add a placeholder
+        else:
+            # Default to first rate plan in batch (index 0) - mandatory for batch creation
+            payload_data["ProductRatePlanId"] = "@{ProductRatePlan[0].Id}"
+            defaults_applied.append(
+                {
+                    "field": "ProductRatePlanId",
+                    "value": "@{ProductRatePlan[0].Id} (auto-linked to first rate plan in batch)",
+                }
+            )
 
     if name:
         payload_data["Name"] = name
