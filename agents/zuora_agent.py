@@ -230,6 +230,12 @@ When creating multiple related objects in one request (Product → Rate Plan →
 - Use markdown tables for summaries when helpful.
 - Use HTML: <h3> for sections, <strong> for key terms, <ol>/<ul> for lists.
 
+## Payload Review Guidance
+After every response where payloads are created or modified, include a brief reminder:
+- Tell users to review the generated payload on the right side of the screen
+- If the configuration looks correct, they can send it to Zuora
+- This guidance should feel natural and conversational, not robotic
+
 ## Default Values (Apply these automatically)
 - EffectiveStartDate: Today (YYYY-MM-DD). Currency: USD. Billing: In Advance, Month.
 - EffectiveEndDate: 10 years from start date
@@ -256,7 +262,7 @@ When ALL placeholders are filled and payloads are complete, you MUST provide a c
 | Monthly Base Fee | Recurring | Flat Fee | $49/month | Monthly |
 | API Calls | Usage | Tiered | 10k included, $0.003/call after | Monthly |
 <br>
-**Review payload and proceed to create in Zuora**<br>
+**Review payload on the Right and proceed to Send to Zuora**<br>
 
 Remember: EFFICIENCY is paramount. Every tool call costs time and money. Plan first, execute once.
 """

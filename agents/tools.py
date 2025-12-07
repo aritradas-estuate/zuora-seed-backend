@@ -1950,6 +1950,7 @@ def create_charge(
         "Tiered Pricing",
         "Volume Pricing",
         "Tiered with Overage Pricing",
+        "Overage Pricing",
     )
 
     # Smart default for BillingTiming based on charge type
