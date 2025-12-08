@@ -1933,7 +1933,7 @@ def create_charge(
     Smart defaults applied:
     - BillCycleType: DefaultFromCustomer
     - TriggerEvent: ContractEffective
-    - BillingTiming: In Arrears for Usage charges, In Advance for others
+    - BillingTiming: In Advance for Recurring/OneTime charges (not applicable to Usage)
     - BillingPeriod: Month (for Recurring charges)
     - Currency: USD
     - RatingGroup: ByBillingPeriod for tiered/volume Usage charges
@@ -2141,31 +2141,13 @@ def create_charge(
     payload_data["BillCycleType"] = bill_cycle_type
     payload_data["TriggerEvent"] = trigger_event
 
-    # Determine if this is a tiered/volume charge model
-    # Tiered/Volume usage charges do NOT use BillingTiming per Zuora API
-    current_charge_model = payload_data.get("ChargeModel", "")
-    is_tiered_model = current_charge_model in (
-        "Tiered Pricing",
-        "Volume Pricing",
-        "Tiered with Overage Pricing",
-        "Overage Pricing",
-    )
-
     # Smart default for BillingTiming based on charge type
-    # Note: Tiered/Volume usage charges should NOT have BillingTiming
-    if billing_timing is not None:
+    # Note: Usage charges do NOT use BillingTiming per Zuora API
+    if billing_timing is not None and charge_type != "Usage":
         payload_data["BillingTiming"] = billing_timing
-    elif charge_type == "Usage" and is_tiered_model:
-        # Do NOT add BillingTiming for tiered/volume usage charges
-        pass
     elif charge_type == "Usage":
-        payload_data["BillingTiming"] = "In Arrears"
-        defaults_applied.append(
-            {
-                "field": "BillingTiming",
-                "value": "In Arrears (usage charges billed after consumption)",
-            }
-        )
+        # Usage charges do NOT use BillingTiming
+        pass
     else:
         payload_data["BillingTiming"] = "In Advance"
         defaults_applied.append(

@@ -145,6 +145,7 @@ REQUIRED_FIELDS = {
             "UOM": "Unit of measure for usage charges (e.g., API_CALL, GB, SMS)",
             "ProductRatePlanChargeTierData": "Container for pricing tiers with currency and price",
             "RatingGroup": "How to aggregate usage for rating: 'ByBillingPeriod' (default), 'ByUsageStartDate', 'ByUsageRecord', 'ByUsageUpload', or 'ByGroupId'. Required for tiered/volume usage charges.",
+            "BillingTiming": "When to bill (Recurring/OneTime only): 'In Advance' (before service) or 'In Arrears' (after). Not applicable to Usage charges.",
         },
     },
     "charge_create": {
@@ -173,6 +174,7 @@ REQUIRED_FIELDS = {
             "UOM": "Unit of measure for usage charges (e.g., API_CALL, GB, SMS)",
             "ProductRatePlanChargeTierData": "Container for pricing tiers with currency and price",
             "RatingGroup": "How to aggregate usage for rating: 'ByBillingPeriod' (default), 'ByUsageStartDate', 'ByUsageRecord', 'ByUsageUpload', or 'ByGroupId'. Required for tiered/volume usage charges.",
+            "BillingTiming": "When to bill (Recurring/OneTime only): 'In Advance' (before service) or 'In Arrears' (after). Not applicable to Usage charges.",
         },
     },
     "account": {
