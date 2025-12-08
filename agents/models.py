@@ -129,6 +129,21 @@ class Charge(BaseModel):
     defaultQuantity: Optional[float] = Field(
         None, description="Default quantity of units"
     )
+    # Price increase on renewal fields
+    priceIncreaseOption: Optional[
+        Literal["FromTenantPercentageValue", "SpecificPercentageValue"]
+    ] = Field(
+        None,
+        description="Price increase option on renewal: 'FromTenantPercentageValue' (use tenant setting) or 'SpecificPercentageValue' (use priceIncreasePercentage)",
+    )
+    priceIncreasePercentage: Optional[float] = Field(
+        None,
+        description="Percentage to increase/decrease price on renewal (-100 to 100). Required when priceIncreaseOption='SpecificPercentageValue'",
+    )
+    useTenantDefaultForPriceChange: Optional[bool] = Field(
+        None,
+        description="When true, uses tenant-level percentage uplift for automatic price change. Set to false when using specific percentage.",
+    )
     # PWD (Prepaid with Drawdown) specific fields
     prepaidQuantity: Optional[float] = Field(
         None, description="Units included in prepaid"

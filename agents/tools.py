@@ -1917,6 +1917,11 @@ def create_charge(
             "ByGroupId",
         ]
     ] = None,
+    price_increase_option: Optional[
+        Literal["FromTenantPercentageValue", "SpecificPercentageValue"]
+    ] = None,
+    price_increase_percentage: Optional[float] = None,
+    default_quantity: Optional[float] = None,
 ) -> str:
     """Generate charge creation payload per Zuora v1 API schema.
 
@@ -1976,6 +1981,16 @@ def create_charge(
         currency: Currency code (default: USD)
         rating_group: How to aggregate usage for rating (ByBillingPeriod, ByUsageStartDate, etc.)
                      Auto-set to ByBillingPeriod for tiered/volume Usage charges
+        price_increase_option: Price increase behavior on renewal:
+                              - "FromTenantPercentageValue": Use tenant's default percentage setting
+                              - "SpecificPercentageValue": Use price_increase_percentage value
+        price_increase_percentage: Percentage to increase/decrease price on renewal.
+                                  Value must be between -100 and 100 (e.g., 10 for 10% increase).
+                                  Required when price_increase_option="SpecificPercentageValue".
+                                  If provided without price_increase_option, auto-sets to "SpecificPercentageValue"
+                                  and sets UseTenantDefaultForPriceChange to false.
+        default_quantity: Default quantity of units. Required for Per Unit Pricing, Volume Pricing,
+                         and Tiered Pricing models. Defaults to 1 if not specified for these models.
 
     Examples:
         # Flat Fee Pricing (single price)
@@ -2045,6 +2060,17 @@ def create_charge(
                 {"units": 1000, "price": 0.08},  # 501-1000 GB @ $0.08/GB
             ],
             overage_price=0.05,     # $0.05/GB after 1000 GB
+        )
+
+        # Recurring charge with 10% price increase on each renewal
+        create_charge(
+            name="Monthly Subscription",
+            charge_type="Recurring",
+            charge_model="Per Unit Pricing",
+            price=30.00,
+            billing_period="Month",
+            price_increase_option="SpecificPercentageValue",
+            price_increase_percentage=10,  # 10% increase on each renewal
         )
     """
     # Entry logging for debugging tool call issues
@@ -2325,6 +2351,59 @@ def create_charge(
                     }
                 ]
             }
+
+    # Price increase on renewal (for termed subscriptions)
+    # See: https://developer.zuora.com/v1-api-reference/api/operation/Object_POSTProductRatePlanCharge/
+    if price_increase_percentage is not None:
+        # Validate range: -100 to 100
+        if price_increase_percentage < -100 or price_increase_percentage > 100:
+            warnings.append(
+                f"PriceIncreasePercentage must be between -100 and 100. Got: {price_increase_percentage}"
+            )
+        else:
+            payload_data["PriceIncreasePercentage"] = price_increase_percentage
+
+            # CRITICAL: Must set UseTenantDefaultForPriceChange to false when using specific percentage
+            # Otherwise Zuora returns error: "The percentage change cannot be updated when you
+            # choose to use your tenant default price change value."
+            payload_data["UseTenantDefaultForPriceChange"] = False
+            defaults_applied.append(
+                {
+                    "field": "UseTenantDefaultForPriceChange",
+                    "value": "false (required when using specific percentage)",
+                }
+            )
+
+        # Auto-set PriceIncreaseOption if percentage provided but option not specified
+        if not price_increase_option:
+            payload_data["PriceIncreaseOption"] = "SpecificPercentageValue"
+            defaults_applied.append(
+                {
+                    "field": "PriceIncreaseOption",
+                    "value": "SpecificPercentageValue (auto-set because PriceIncreasePercentage was provided)",
+                }
+            )
+
+    if price_increase_option:
+        payload_data["PriceIncreaseOption"] = price_increase_option
+
+    # DefaultQuantity - required for Per Unit Pricing, Volume Pricing, Tiered Pricing
+    # See: https://developer.zuora.com/v1-api-reference/api/operation/Object_POSTProductRatePlanCharge/
+    if default_quantity is not None:
+        payload_data["DefaultQuantity"] = default_quantity
+    elif normalized_charge_model in (
+        "Per Unit Pricing",
+        "Volume Pricing",
+        "Tiered Pricing",
+    ):
+        # Smart default: These charge models require DefaultQuantity, default to 1
+        payload_data["DefaultQuantity"] = 1
+        defaults_applied.append(
+            {
+                "field": "DefaultQuantity",
+                "value": f"1 (required for {normalized_charge_model})",
+            }
+        )
 
     if name:
         # Validate name length

@@ -133,6 +133,7 @@ REQUIRED_FIELDS = {
         "nested": {},
         "conditional": {
             "ChargeType=Usage": ["UOM"],
+            "PriceIncreaseOption=SpecificPercentageValue": ["PriceIncreasePercentage"],
         },
         "descriptions": {
             "Name": "Charge name",
@@ -146,6 +147,10 @@ REQUIRED_FIELDS = {
             "ProductRatePlanChargeTierData": "Container for pricing tiers with currency and price",
             "RatingGroup": "How to aggregate usage for rating: 'ByBillingPeriod' (default), 'ByUsageStartDate', 'ByUsageRecord', 'ByUsageUpload', or 'ByGroupId'. Required for tiered/volume usage charges.",
             "BillingTiming": "When to bill (Recurring/OneTime only): 'In Advance' (before service) or 'In Arrears' (after). Not applicable to Usage charges.",
+            "PriceIncreaseOption": "Price increase on renewal: 'FromTenantPercentageValue' (use tenant setting) or 'SpecificPercentageValue' (use PriceIncreasePercentage)",
+            "PriceIncreasePercentage": "Percentage to increase/decrease price on renewal (-100 to 100). Required when PriceIncreaseOption='SpecificPercentageValue'.",
+            "UseTenantDefaultForPriceChange": "Boolean. Set to false when using specific percentage to avoid conflict with tenant defaults.",
+            "DefaultQuantity": "Default quantity of units. Required for Per Unit Pricing, Volume Pricing, and Tiered Pricing models. Defaults to 1.",
         },
     },
     "charge_create": {
@@ -162,6 +167,10 @@ REQUIRED_FIELDS = {
         "nested": {},
         "conditional": {
             "ChargeType=Usage": ["UOM"],
+            "PriceIncreaseOption=SpecificPercentageValue": ["PriceIncreasePercentage"],
+            "ChargeModel=Per Unit Pricing": ["DefaultQuantity"],
+            "ChargeModel=Volume Pricing": ["DefaultQuantity"],
+            "ChargeModel=Tiered Pricing": ["DefaultQuantity"],
         },
         "descriptions": {
             "Name": "Charge name",
@@ -175,6 +184,10 @@ REQUIRED_FIELDS = {
             "ProductRatePlanChargeTierData": "Container for pricing tiers with currency and price",
             "RatingGroup": "How to aggregate usage for rating: 'ByBillingPeriod' (default), 'ByUsageStartDate', 'ByUsageRecord', 'ByUsageUpload', or 'ByGroupId'. Required for tiered/volume usage charges.",
             "BillingTiming": "When to bill (Recurring/OneTime only): 'In Advance' (before service) or 'In Arrears' (after). Not applicable to Usage charges.",
+            "PriceIncreaseOption": "Price increase on renewal: 'FromTenantPercentageValue' (use tenant setting) or 'SpecificPercentageValue' (use PriceIncreasePercentage)",
+            "PriceIncreasePercentage": "Percentage to increase/decrease price on renewal (-100 to 100). Required when PriceIncreaseOption='SpecificPercentageValue'.",
+            "UseTenantDefaultForPriceChange": "Boolean. Set to false when using specific percentage to avoid conflict with tenant defaults.",
+            "DefaultQuantity": "Default quantity of units. Required for Per Unit Pricing, Volume Pricing, and Tiered Pricing models. Defaults to 1.",
         },
     },
     "account": {
@@ -535,6 +548,67 @@ def _get_placeholder_question(field_name: str, api_type: str) -> Tuple[str, List
         # Generic fallback - make field name readable
         readable_name = field_name.replace("_", " ").replace("__c", "")
         return (f"What {readable_name}?", [])
+
+
+def _get_placeholder_recommendation(field_name: str, api_type: str) -> str:
+    """
+    Generate a recommendation for a placeholder field.
+
+    Args:
+        field_name: The field name that needs a value
+        api_type: The API type context
+
+    Returns:
+        A recommendation string for the field
+    """
+    field_lower = field_name.lower()
+
+    if field_lower == "billingperiod":
+        return "Use 'Month' for standard monthly billing, 'Annual' for yearly subscriptions"
+
+    elif field_lower == "chargemodel":
+        return "Use 'Flat Fee Pricing' for simple fixed-price charges, 'Per Unit Pricing' for quantity-based"
+
+    elif field_lower == "chargetype":
+        return "Use 'Recurring' for ongoing charges, 'OneTime' for setup fees, 'Usage' for metered billing"
+
+    elif field_lower == "billcycletype":
+        return "Use 'DefaultFromCustomer' to align with customer's existing billing day"
+
+    elif field_lower == "triggerevent":
+        return "Use 'ContractEffective' for immediate billing when contract starts"
+
+    elif field_lower == "uom":
+        return "Specify the unit of measure (e.g., 'API_CALL', 'GB', 'User', 'SMS')"
+
+    elif field_lower == "name":
+        return "Provide a descriptive name that clearly identifies this item"
+
+    elif field_lower in ("productrateplanchargeid", "productrateplanid"):
+        return "Use object reference like '@{ProductRatePlan[0].Id}' to link to a rate plan in this batch"
+
+    elif field_lower == "productid":
+        return "Use object reference like '@{Product[0].Id}' to link to a product in this batch"
+
+    elif field_lower == "productrateplanchargetierdata":
+        return "Specify pricing with 'price' parameter for flat/per-unit, or 'tiers' for tiered pricing"
+
+    elif field_lower == "effectivestartdate":
+        return "Use today's date in YYYY-MM-DD format (e.g., '2024-01-01')"
+
+    elif field_lower == "effectiveenddate":
+        return "Use a future date in YYYY-MM-DD format (e.g., '2034-01-01' for 10-year validity)"
+
+    elif field_lower == "sku":
+        return (
+            "Use a unique alphanumeric identifier (e.g., 'PROD-001', 'ANALYTICS-PRO')"
+        )
+
+    elif field_lower == "currency":
+        return "Use standard currency code like 'USD', 'EUR', 'GBP'"
+
+    else:
+        return f"Provide a value for {field_name}"
 
 
 def format_placeholder_warning(

@@ -483,12 +483,18 @@ def invoke(payload: dict) -> dict:
                 p for p in modified_payloads_data if p.get("_placeholders")
             ]
             if payloads_with_placeholders:
-                from agents.html_formatter import generate_placeholder_warning_html
+                from agents.html_formatter import (
+                    generate_placeholder_warning_html,
+                    generate_placeholder_recommendations_html,
+                )
 
                 placeholder_warning = generate_placeholder_warning_html(
                     payloads_with_placeholders
                 )
-                answer = placeholder_warning + answer
+                placeholder_recommendations = generate_placeholder_recommendations_html(
+                    payloads_with_placeholders
+                )
+                answer = placeholder_warning + placeholder_recommendations + answer
 
             # Add call-to-action at the end when payloads exist
             if modified_payloads_data:

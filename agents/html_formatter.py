@@ -486,7 +486,7 @@ def generate_placeholder_warning_html(
     payloads_with_placeholders: List[Dict[str, Any]],
 ) -> str:
     """
-    Generate a red warning table for payloads containing placeholders.
+    Generate an orange warning table for payloads containing placeholders.
 
     Args:
         payloads_with_placeholders: List of payload dicts that have _placeholders field
@@ -541,15 +541,59 @@ def generate_placeholder_warning_html(
     return f"""<div style="overflow-x: auto; margin-bottom: 16px;">
 <table style="width: 100%; border-collapse: collapse;">
 <tr>
-<td style="background-color: #fee2e2; border: 2px solid #dc2626; padding: 12px 16px; border-radius: 4px;">
-<strong style="color: #991b1b;">⚠️ Missing Information in Payloads</strong>
-<ul style="margin: 8px 0 0 0; padding-left: 20px; color: #7f1d1d;">
+<td style="background-color: #fff7ed; border: 2px solid #f97316; padding: 12px 16px; border-radius: 4px;">
+<strong style="color: #c2410c;">⚠️ Missing Information in Payloads</strong>
+<ul style="margin: 8px 0 0 0; padding-left: 20px; color: #9a3412;">
 {items_html}
 </ul>
 </td>
 </tr>
 </table>
 </div>
+"""
+
+
+def generate_placeholder_recommendations_html(
+    payloads_with_placeholders: List[Dict[str, Any]],
+) -> str:
+    """
+    Generate a recommendations section for fields with placeholder values.
+
+    Args:
+        payloads_with_placeholders: List of payload dicts that have _placeholders field
+
+    Returns:
+        HTML string with recommendations list
+    """
+    if not payloads_with_placeholders:
+        return ""
+
+    # Import the recommendation function
+    from .validation_schemas import _get_placeholder_recommendation
+
+    # Collect unique placeholder fields across all payloads
+    unique_fields = set()
+    for p in payloads_with_placeholders:
+        placeholders = p.get("_placeholders", [])
+        api_type = p.get("zuora_api_type", "")
+        for field in placeholders:
+            unique_fields.add((field, api_type))
+
+    if not unique_fields:
+        return ""
+
+    # Build recommendation items
+    items = []
+    for field, api_type in sorted(unique_fields, key=lambda x: x[0]):
+        recommendation = _get_placeholder_recommendation(field, api_type)
+        items.append(f"<li><code>{field}</code>: {recommendation}</li>")
+
+    items_html = "\n".join(items)
+
+    return f"""<p><strong>Recommendations</strong></p>
+<ul style="margin: 4px 0 12px 0; padding-left: 20px;">
+{items_html}
+</ul>
 """
 
 
