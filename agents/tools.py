@@ -84,11 +84,131 @@ def _to_crud_field_name(field: str) -> str:
     return CRUD_FIELD_MAPPING.get(field.lower(), field)
 
 
+def _is_update_payload(payload: Dict[str, Any]) -> bool:
+    """
+    Check if payload is an update payload with method/endpoint/body structure.
+
+    Update payloads (product_update, rate_plan_update, charge_update) have structure:
+    {"method": "PUT", "endpoint": "/v1/object/...", "body": {"FieldName": "value"}}
+
+    Create payloads have flat structure:
+    {"Name": "...", "EffectiveStartDate": "...", ...}
+
+    Args:
+        payload: The payload dict to check
+
+    Returns:
+        True if this is an update payload with body structure
+    """
+    return "method" in payload and "endpoint" in payload and "body" in payload
+
+
+def _extract_entity_id_from_endpoint(endpoint: str) -> Optional[str]:
+    """
+    Extract the entity ID from a Zuora API endpoint URL.
+
+    Examples:
+        "/v1/object/product/6a629cfee87443778306054d7badcb57" -> "6a629cfee87443778306054d7badcb57"
+        "/v1/object/product-rate-plan/0efc4ea7f9d8411bbeaa07b9e2c27c42" -> "0efc4ea7f9d8411bbeaa07b9e2c27c42"
+
+    Args:
+        endpoint: The API endpoint URL
+
+    Returns:
+        The entity ID if found, None otherwise
+    """
+    if not endpoint:
+        return None
+    parts = endpoint.rstrip("/").split("/")
+    if parts:
+        return parts[-1]
+    return None
+
+
+def _find_existing_update_payload(
+    payloads: List[Dict[str, Any]],
+    api_type: str,
+    entity_id: str,
+) -> Optional[int]:
+    """
+    Find an existing update payload for a given entity by ID.
+
+    This is more robust than exact endpoint matching because it extracts
+    the entity ID from the endpoint and compares just the IDs.
+
+    Args:
+        payloads: List of payload dicts
+        api_type: The zuora_api_type to match (e.g., "product_update", "rate_plan_update")
+        entity_id: The Zuora entity ID to find
+
+    Returns:
+        Index of the matching payload if found, None otherwise
+    """
+    for i, p in enumerate(payloads):
+        if p.get("zuora_api_type") != api_type:
+            continue
+        endpoint = p.get("payload", {}).get("endpoint", "")
+        payload_entity_id = _extract_entity_id_from_endpoint(endpoint)
+        if payload_entity_id and payload_entity_id == entity_id:
+            return i
+    return None
+
+
+def _resolve_field_path_for_update_payload(
+    payload: Dict[str, Any], field_path: str
+) -> str:
+    """
+    For update payloads, auto-resolve field paths to body.* if needed.
+
+    Update payloads have structure: {"method": "PUT", "endpoint": "...", "body": {...}}
+    When user wants to update EffectiveEndDate, they should update body.EffectiveEndDate,
+    not add a new field at the payload level.
+
+    This function automatically prepends "body." to the field_path if:
+    1. The payload is an update payload (has method/endpoint/body structure)
+    2. The field_path doesn't already start with "body."
+    3. The field exists in the body dict (case-insensitive match)
+
+    Args:
+        payload: The payload dict
+        field_path: Original field path from user/agent
+
+    Returns:
+        Resolved field path (with "body." prepended if needed)
+    """
+    # Only process update payloads
+    if not _is_update_payload(payload):
+        return field_path
+
+    # If field_path already starts with "body.", use as-is
+    if field_path.lower().startswith("body."):
+        return field_path
+
+    # Check if field exists in body (case-insensitive)
+    body = payload.get("body", {})
+    field_key = field_path.split(".")[0]  # Get first part of path
+
+    if _find_existing_key(body, field_key):
+        # Field exists in body, prepend "body."
+        resolved = f"body.{field_path}"
+        logger.info(
+            f"Auto-resolved field path for update payload: '{field_path}' -> '{resolved}'"
+        )
+        return resolved
+
+    # Field doesn't exist in body, keep original path
+    return field_path
+
+
 def _find_payload_by_name(
     matching: List[Tuple[int, Dict[str, Any]]], name: str
 ) -> Tuple[Optional[Tuple[int, Dict[str, Any]]], List[str]]:
     """
     Find a payload by name using case-insensitive substring matching.
+
+    For create payloads, matches against the "Name" or "name" field.
+    For update payloads (which don't have a Name field), matches against
+    the endpoint URL which contains the entity ID.
 
     Args:
         matching: List of (index, payload) tuples to search
@@ -97,17 +217,27 @@ def _find_payload_by_name(
     Returns:
         Tuple of:
         - (index, payload) if exactly one match found, None otherwise
-        - List of all matching names (for error messages)
+        - List of all matching names/identifiers (for error messages)
     """
     name_lower = name.lower()
     matches = []
 
     for idx, p in matching:
+        # First try to match by Name field (for create payloads)
         payload_name = p.get("payload", {}).get("Name") or p.get("payload", {}).get(
             "name", ""
         )
         if payload_name and name_lower in payload_name.lower():
             matches.append((idx, p, payload_name))
+            continue
+
+        # For update payloads, try to match by endpoint (contains entity ID)
+        # Update payloads have structure: {"payload": {"method": "PUT", "endpoint": "...", "body": {...}}}
+        endpoint = p.get("payload", {}).get("endpoint", "")
+        if endpoint and name_lower in endpoint.lower():
+            # Use the last part of the endpoint (entity ID) as the display name
+            endpoint_id = endpoint.split("/")[-1] if "/" in endpoint else endpoint
+            matches.append((idx, p, f"endpoint:{endpoint_id}"))
 
     if len(matches) == 1:
         idx, p, _ = matches[0]
@@ -454,6 +584,11 @@ def update_payload(
 
     payload_entry = target_entry
     payload = payload_entry["payload"]
+
+    # AUTO-RESOLVE: For update payloads, redirect fields to body.* if they exist there
+    # This fixes the issue where agent calls update_payload(field_path="EffectiveEndDate")
+    # but the field actually lives at payload.body.EffectiveEndDate
+    field_path = _resolve_field_path_for_update_payload(payload, field_path)
 
     # Navigate to the field using dot notation
     parts = field_path.split(".")
@@ -1185,21 +1320,35 @@ If you want to extend the product, use `update_zuora_product` to set a new end d
             "This will backdate the expiration."
         )
 
-    # 6. Generate product update payload
+    # 6. Generate or update product update payload
     payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
 
-    product_payload = {
-        "payload": {
-            "method": "PUT",
-            "endpoint": f"/v1/object/product/{product_id}",
-            "body": {"EffectiveEndDate": new_end_date},
-        },
-        "zuora_api_type": "product_update",
-        "payload_id": str(uuid.uuid4())[:8],
-    }
-    payloads.append(product_payload)
+    # Use robust helper to find existing payload by entity ID
+    existing_product_update_idx = _find_existing_update_payload(
+        payloads, "product_update", product_id
+    )
+    product_endpoint = f"/v1/object/product/{product_id}"
 
-    # 7. Generate rate plan update payloads
+    if existing_product_update_idx is not None:
+        # Update existing payload in place
+        payloads[existing_product_update_idx]["payload"]["body"]["EffectiveEndDate"] = (
+            new_end_date
+        )
+        logger.info(f"Updated existing product_update payload for product {product_id}")
+    else:
+        # Create new payload
+        product_payload = {
+            "payload": {
+                "method": "PUT",
+                "endpoint": product_endpoint,
+                "body": {"EffectiveEndDate": new_end_date},
+            },
+            "zuora_api_type": "product_update",
+            "payload_id": str(uuid.uuid4())[:8],
+        }
+        payloads.append(product_payload)
+
+    # 7. Generate or update rate plan update payloads
     rate_plans_to_expire: List[Dict[str, Any]] = []
     rate_plans_skipped: List[Dict[str, Any]] = []
 
@@ -1208,23 +1357,47 @@ If you want to extend the product, use `update_zuora_product` to set a new end d
         rp_name = rp.get("name", "Unknown")
         rp_current_end = rp.get("effectiveEndDate")
 
-        # Only update if rate plan's end date is after the new product end date
-        if rp_current_end and rp_current_end > new_end_date:
-            rp_payload = {
-                "payload": {
-                    "method": "PUT",
-                    "endpoint": f"/v1/object/product-rate-plan/{rp_id}",
-                    "body": {"EffectiveEndDate": new_end_date},
-                },
-                "zuora_api_type": "rate_plan_update",
-                "payload_id": str(uuid.uuid4())[:8],
-            }
-            payloads.append(rp_payload)
+        # Check for existing rate_plan_update payload for this rate plan FIRST
+        # This ensures we always update existing payloads regardless of date condition
+        existing_rp_update_idx = _find_existing_update_payload(
+            payloads, "rate_plan_update", rp_id
+        )
+
+        # Determine if we need to update/create a payload for this rate plan
+        # Either: (1) rate plan needs expiring, or (2) we already have a payload for it
+        needs_update = (rp_current_end and rp_current_end > new_end_date) or (
+            existing_rp_update_idx is not None
+        )
+
+        if needs_update:
+            rp_endpoint = f"/v1/object/product-rate-plan/{rp_id}"
+
+            if existing_rp_update_idx is not None:
+                # Update existing payload in place
+                payloads[existing_rp_update_idx]["payload"]["body"][
+                    "EffectiveEndDate"
+                ] = new_end_date
+                logger.info(
+                    f"Updated existing rate_plan_update payload for rate plan {rp_id}"
+                )
+            else:
+                # Create new payload
+                rp_payload = {
+                    "payload": {
+                        "method": "PUT",
+                        "endpoint": rp_endpoint,
+                        "body": {"EffectiveEndDate": new_end_date},
+                    },
+                    "zuora_api_type": "rate_plan_update",
+                    "payload_id": str(uuid.uuid4())[:8],
+                }
+                payloads.append(rp_payload)
+
             rate_plans_to_expire.append(
                 {
                     "name": rp_name,
                     "id": rp_id,
-                    "current_end": rp_current_end,
+                    "current_end": rp_current_end or "N/A",
                     "new_end": new_end_date,
                 }
             )

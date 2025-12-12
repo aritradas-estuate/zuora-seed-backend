@@ -209,6 +209,17 @@ When updating a payload field, you MUST specify which payload to update if there
 
 **DO NOT** call update_payload without payload_name when multiple payloads of the same type exist - it will fail!
 
+### Update Payloads vs Create Payloads
+
+**Create payloads** (product_create, rate_plan_create, charge_create) have flat structure:
+- Fields like `Name`, `BillingPeriod` are at the top level
+- Use `field_path="BillingPeriod"` directly
+
+**Update payloads** (product_update, rate_plan_update, charge_update) have nested structure:
+- Fields are inside `body`: `{"method": "PUT", "endpoint": "...", "body": {"EffectiveEndDate": "..."}}`
+- The system auto-resolves `field_path="EffectiveEndDate"` to `body.EffectiveEndDate`
+- **PREFERRED:** For expiration date changes, use `expire_product()` instead of `update_payload()`
+
 ## Smart Inference (Conservative)
 When creating charges, you MAY infer the charge model ONLY when the context is very clear:
 - User explicitly says "flat fee" or "fixed monthly price" with a dollar amount and NO unit of measure → Flat Fee Pricing
@@ -356,6 +367,20 @@ When a user wants to expire (end-date) a product:
 - Only rate plans with end dates after the new product end date will be updated
 - Existing subscriptions are NOT affected by product/rate plan expiration
 - If a past date is provided, warn the user but proceed if they confirm
+
+### Changing Expiration Date on Existing Payloads - CRITICAL
+
+If product_update/rate_plan_update payloads already exist and the user wants to change the date:
+1. **ALWAYS call `expire_product()` again with the new date** - it automatically updates existing payloads
+2. The tool detects existing payloads for the same product/rate plan and updates them in-place
+3. No duplicate payloads will be created
+
+**Example conversation:**
+- User: "Expire product XYZ on Dec 14" → Call `expire_product(product_id, "2025-12-14")`
+- User: "Actually, change it to Dec 25" → Call `expire_product(product_id, "2025-12-25")` again
+- The existing payloads are updated, not duplicated
+
+**DO NOT manually use update_payload() for expiration date changes** - always use `expire_product()` which handles the nested payload structure correctly.
 
 ## Response Style
 - Be concise. Keep responses short and conversational.
