@@ -143,12 +143,20 @@ REQUIRED_FIELDS = {
             "Taxable=true": ["TaxCode", "TaxMode"],
             "ChargeModel=Discount-Fixed Amount": ["ApplyDiscountTo", "DiscountLevel"],
             "ChargeModel=Discount-Percentage": ["ApplyDiscountTo", "DiscountLevel"],
+            # Prepaid with Drawdown conditional requirements
+            "ChargeModel=Prepaid with Drawdown": [
+                "PrepaidQuantity",
+                "PrepaidUom",
+                "CommitmentType",
+                "ValidityPeriodType",
+            ],
+            "ChargeFunction=Drawdown": ["UOM"],
         },
         "descriptions": {
             # Core Required Fields
             "Name": "Charge name (max 100 chars)",
             "ProductRatePlanId": "Rate plan ID (use @{ProductRatePlan.Id} or @{ProductRatePlan[0].Id})",
-            "ChargeModel": "Pricing model: 'Flat Fee Pricing', 'Per Unit Pricing', 'Tiered Pricing', 'Volume Pricing', 'Overage Pricing', 'Tiered with Overage Pricing', 'Discount-Fixed Amount', 'Discount-Percentage', 'Delivery Pricing', 'MultiAttributePricing'",
+            "ChargeModel": "Pricing model: 'Flat Fee Pricing', 'Per Unit Pricing', 'Tiered Pricing', 'Volume Pricing', 'Overage Pricing', 'Tiered with Overage Pricing', 'Discount-Fixed Amount', 'Discount-Percentage', 'Delivery Pricing', 'MultiAttributePricing', 'Prepaid with Drawdown'",
             "ChargeType": "Charge type: 'OneTime', 'Recurring', or 'Usage'",
             "BillCycleType": "Billing day type: 'DefaultFromCustomer', 'SpecificDayofMonth', 'SubscriptionStartDay', 'ChargeTriggerDay', 'SpecificDayofWeek', 'TermStartDay', 'TermEndDay'",
             "BillingPeriod": "Billing period (Recurring charges only): 'Month', 'Quarter', 'Annual', 'Semi-Annual', 'Specific Months', 'Specific Weeks', 'Specific Days', 'Subscription Term', 'Week'. Not applicable to OneTime or Usage charges.",
@@ -248,12 +256,20 @@ REQUIRED_FIELDS = {
             "Taxable=true": ["TaxCode", "TaxMode"],
             "ChargeModel=Discount-Fixed Amount": ["ApplyDiscountTo", "DiscountLevel"],
             "ChargeModel=Discount-Percentage": ["ApplyDiscountTo", "DiscountLevel"],
+            # Prepaid with Drawdown conditional requirements
+            "ChargeModel=Prepaid with Drawdown": [
+                "PrepaidQuantity",
+                "PrepaidUom",
+                "CommitmentType",
+                "ValidityPeriodType",
+            ],
+            "ChargeFunction=Drawdown": ["UOM"],
         },
         "descriptions": {
             # Core Required Fields
             "Name": "Charge name (max 100 chars)",
             "ProductRatePlanId": "Rate plan ID or object reference (e.g., '@{ProductRatePlan[0].Id}')",
-            "ChargeModel": "Pricing model: 'Flat Fee Pricing', 'Per Unit Pricing', 'Tiered Pricing', 'Volume Pricing', 'Overage Pricing', 'Tiered with Overage Pricing', 'Discount-Fixed Amount', 'Discount-Percentage', 'Delivery Pricing', 'MultiAttributePricing'",
+            "ChargeModel": "Pricing model: 'Flat Fee Pricing', 'Per Unit Pricing', 'Tiered Pricing', 'Volume Pricing', 'Overage Pricing', 'Tiered with Overage Pricing', 'Discount-Fixed Amount', 'Discount-Percentage', 'Delivery Pricing', 'MultiAttributePricing', 'Prepaid with Drawdown'",
             "ChargeType": "Charge type: 'OneTime', 'Recurring', or 'Usage'",
             "BillCycleType": "Billing day type: 'DefaultFromCustomer', 'SpecificDayofMonth', 'SubscriptionStartDay', 'ChargeTriggerDay', 'SpecificDayofWeek', 'TermStartDay', 'TermEndDay'",
             "BillingPeriod": "Billing period (Recurring charges only): 'Month', 'Quarter', 'Annual', 'Semi-Annual', 'Specific Months', 'Specific Weeks', 'Specific Days', 'Subscription Term', 'Week'. Not applicable to OneTime or Usage charges.",

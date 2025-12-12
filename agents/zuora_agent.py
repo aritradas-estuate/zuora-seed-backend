@@ -27,6 +27,9 @@ from .tools import (
     create_product,
     create_rate_plan,
     create_charge,
+    # Prepaid with Drawdown helper tools
+    create_prepaid_charge,
+    create_drawdown_charge,
     # Zuora API tools (update - payload generation)
     update_zuora_product,
     update_zuora_rate_plan,
@@ -268,6 +271,38 @@ create_charge(
 )
 ```
 
+**Prepaid Charge (10,000 API credits for $99/month)**:
+```
+create_prepaid_charge(
+    name="API Credits - 10K Monthly",
+    prepaid_uom="API_CALL",
+    prepaid_quantity=10000,
+    price=99.0,
+    validity_period_type="MONTH",
+    is_rollover=True,
+    rollover_periods=2
+)
+```
+
+**Drawdown Charge (draws from prepaid balance)**:
+```
+create_drawdown_charge(
+    name="API Usage",
+    uom="API_CALL"
+)
+```
+
+### Prepaid with Drawdown Pattern
+For prepaid/wallet scenarios, create BOTH charges:
+1. **Prepaid charge** (`create_prepaid_charge`): Creates the "wallet" - customer pays upfront for units
+2. **Drawdown charge** (`create_drawdown_charge`): Usage charge that draws from the wallet (price=$0)
+
+Key parameters:
+- `commitment_type`: "UNIT" (track units) or "CURRENCY" (track money)
+- `validity_period_type`: How long balance is valid (MONTH, QUARTER, ANNUAL, SUBSCRIPTION_TERM)
+- `is_rollover`: Whether unused units carry forward
+- `drawdown_rate`: Conversion rate if drawdown UOM differs from prepaid UOM
+
 ### NEVER leave out pricing parameters when the user provides them!
 - User says "$49" → pass `price=49.0`
 - User says "$0.003 per call after" → pass `overage_price=0.003`
@@ -429,6 +464,37 @@ User: "How do I configure prepaid?"
 4. list_payload_structure (you know the structure!)
 5-10. ... many exploratory calls
 
+## Prepaid with Drawdown Quick Reference
+
+For creating prepaid/wallet functionality, use the specialized helper tools:
+
+**Prepaid Charge** (the "wallet"):
+```
+create_prepaid_charge(
+    name="API Credits - 10K Monthly",
+    prepaid_uom="API_CALL",
+    prepaid_quantity=10000,
+    price=99.0,
+    commitment_type="UNIT",       # or "CURRENCY"
+    validity_period_type="MONTH", # MONTH, QUARTER, ANNUAL, SUBSCRIPTION_TERM
+    is_rollover=True,
+    rollover_periods=2
+)
+```
+
+**Drawdown Charge** (consumes from wallet):
+```
+create_drawdown_charge(
+    name="API Usage",
+    uom="API_CALL",
+    # Optional: for different UOM than prepaid
+    drawdown_rate=5,      # 1 report = 5 credits
+    drawdown_uom="CREDIT"
+)
+```
+
+Use `generate_prepaid_config()` for comprehensive advisory guidance including auto top-up workflows.
+
 ## Workflow
 1. **Understand**: Restate scenario (<h3>Understanding Your Request</h3>).
 2. **Generate Guides**: Create complete advisory payloads with {{REPLACE_WITH_...}} markers for user-specific values.
@@ -486,6 +552,9 @@ PROJECT_MANAGER_TOOLS = [
     create_product,
     create_rate_plan,
     create_charge,
+    # Prepaid with Drawdown helper tools
+    create_prepaid_charge,
+    create_drawdown_charge,
     # Update operations (payload generation)
     update_zuora_product,
     update_zuora_rate_plan,
