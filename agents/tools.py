@@ -9,12 +9,10 @@ import uuid
 import jellyfish
 
 logger = logging.getLogger(__name__)
-from .models import ProductSpec, ZuoraApiType
+from .models import ZuoraApiType
 from .zuora_client import get_zuora_client
-from .observability import trace_function
 from .validation_schemas import (
     validate_payload,
-    format_validation_questions,
     generate_placeholder_payload,
     format_placeholder_warning,
 )
@@ -24,7 +22,6 @@ from .validation_utils import (
     validate_zuora_id as _validate_zuora_id_tuple,
     validate_sku_format as _validate_sku_format_tuple,
     format_error_message,
-    is_object_reference,
     validate_name_length,
     validate_product_name_unique,
     validate_rate_plan_name_unique,
@@ -270,7 +267,7 @@ def get_payloads(tool_context: ToolContext, api_type: Optional[str] = None) -> s
         ]
 
     if not payloads:
-        return f"No payloads found" + (f" for type '{api_type}'" if api_type else "")
+        return "No payloads found" + (f" for type '{api_type}'" if api_type else "")
 
     # Build human-readable table summary
     output = f"**Payloads ({len(payloads)} total):**\n\n"
@@ -397,12 +394,12 @@ def update_payload(
         elif len(matched_names) > 1:
             # Multiple payloads match - ambiguous, fail with helpful error
             error_msg = f"<p>❌ <strong>Error:</strong> Multiple <code>{api_type}</code> payloads match '<code>{payload_name}</code>'.</p>"
-            error_msg += f"<p><strong>Matching payloads:</strong></p><ul>"
+            error_msg += "<p><strong>Matching payloads:</strong></p><ul>"
             for name in matched_names:
                 error_msg += f"<li><strong>{name}</strong></li>"
             error_msg += "</ul>"
             error_msg += (
-                f"<p><em>Be more specific:</em> Use a more unique part of the name.</p>"
+                "<p><em>Be more specific:</em> Use a more unique part of the name.</p>"
             )
             return error_msg
         else:
@@ -448,7 +445,7 @@ def update_payload(
                 )
                 error_msg += f"<li><strong>{pname}</strong> (index: {i})</li>"
             error_msg += "</ul>"
-            error_msg += f"<p><strong>Use payload_name (recommended):</strong></p>"
+            error_msg += "<p><strong>Use payload_name (recommended):</strong></p>"
             first_name = matching[0][1].get("payload", {}).get("Name") or matching[0][
                 1
             ].get("payload", {}).get("name", "NAME")
@@ -581,13 +578,7 @@ def create_payload(
         HTML-formatted string with creation result and any defaults that were applied
     """
     from .html_formatter import (
-        generate_reference_documentation,
-        format_payload_with_references,
         format_defaults_applied_html,
-    )
-    from .validation_schemas import (
-        generate_placeholder_payload,
-        format_placeholder_warning,
     )
 
     # Validate api_type
@@ -979,7 +970,7 @@ def get_zuora_rate_plan_details(
 
                 pricing = ch.get("pricing", [])
                 if pricing:
-                    output += f"      Pricing:\n"
+                    output += "      Pricing:\n"
                     for price in pricing:
                         output += f"        - {price.get('currency', 'N/A')}: {price.get('price', 'N/A')}\n"
 
@@ -1883,17 +1874,42 @@ def _get_charge_model_inference_reason(
 @tool(context=True)
 def create_charge(
     tool_context: ToolContext,
+    # ============ Core Identification ============
     rate_plan_id: Optional[str] = None,
     rate_plan_index: Optional[int] = None,
     name: Optional[str] = None,
+    description: Optional[str] = None,
+    product_rate_plan_charge_number: Optional[str] = None,
+    # ============ Charge Type & Model ============
     charge_type: Optional[Literal["Recurring", "OneTime", "Usage"]] = None,
     charge_model: Optional[str] = None,
+    # ============ Pricing Fields ============
     price: Optional[float] = None,
     tiers: Optional[List[Dict[str, Any]]] = None,
+    currency: Optional[str] = None,  # Single currency (for backward compatibility)
+    currencies: Optional[List[str]] = None,  # Multiple currencies: ["USD", "EUR"]
+    prices: Optional[
+        Dict[str, float]
+    ] = None,  # Price per currency: {"USD": 49.0, "EUR": 45.0}
+    default_quantity: Optional[float] = None,
+    min_quantity: Optional[float] = None,
+    max_quantity: Optional[float] = None,
     included_units: Optional[float] = None,
     overage_price: Optional[float] = None,
+    overage_prices: Optional[Dict[str, float]] = None,  # Overage price per currency
+    # ============ Billing Configuration ============
     billing_period: Optional[
-        Literal["Month", "Quarter", "Annual", "Semi-Annual", "Week", "Specific Months"]
+        Literal[
+            "Month",
+            "Quarter",
+            "Annual",
+            "Semi-Annual",
+            "Week",
+            "Specific Months",
+            "Specific Weeks",
+            "Specific Days",
+            "Subscription Term",
+        ]
     ] = None,
     billing_timing: Optional[Literal["In Advance", "In Arrears"]] = None,
     bill_cycle_type: Literal[
@@ -1901,13 +1917,55 @@ def create_charge(
         "SpecificDayofMonth",
         "SubscriptionStartDay",
         "ChargeTriggerDay",
+        "SpecificDayofWeek",
+        "TermStartDay",
+        "TermEndDay",
     ] = "DefaultFromCustomer",
+    bill_cycle_day: Optional[int] = None,
+    weekly_bill_cycle_day: Optional[
+        Literal[
+            "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"
+        ]
+    ] = None,
+    specific_billing_period: Optional[int] = None,
+    billing_period_alignment: Optional[
+        Literal[
+            "AlignToCharge",
+            "AlignToSubscriptionStart",
+            "AlignToTermStart",
+            "AlignToTermEnd",
+        ]
+    ] = None,
+    list_price_base: Optional[
+        Literal[
+            "Per Billing Period",
+            "Per Month",
+            "Per Week",
+            "Per Year",
+            "Per Specific Months",
+        ]
+    ] = None,
+    specific_list_price_base: Optional[int] = None,
     trigger_event: Literal[
         "ContractEffective", "ServiceActivation", "CustomerAcceptance"
     ] = "ContractEffective",
+    # ============ Charge Duration ============
+    end_date_condition: Optional[Literal["SubscriptionEnd", "FixedPeriod"]] = None,
+    up_to_periods: Optional[int] = None,
+    up_to_periods_type: Optional[
+        Literal["Billing Periods", "Days", "Weeks", "Months", "Years"]
+    ] = None,
+    # ============ Price Change on Renewal ============
+    price_change_option: Optional[
+        Literal["NoChange", "SpecificPercentageValue", "UseLatestProductCatalogPricing"]
+    ] = None,
+    price_increase_option: Optional[
+        Literal["FromTenantPercentageValue", "SpecificPercentageValue"]
+    ] = None,
+    price_increase_percentage: Optional[float] = None,
+    use_tenant_default_for_price_change: Optional[bool] = None,
+    # ============ Usage Charge Fields ============
     uom: Optional[str] = None,
-    description: Optional[str] = None,
-    currency: str = "USD",
     rating_group: Optional[
         Literal[
             "ByBillingPeriod",
@@ -1917,11 +1975,106 @@ def create_charge(
             "ByGroupId",
         ]
     ] = None,
-    price_increase_option: Optional[
-        Literal["FromTenantPercentageValue", "SpecificPercentageValue"]
+    usage_record_rating_option: Optional[
+        Literal["EndOfBillingPeriod", "OnDemand"]
     ] = None,
-    price_increase_percentage: Optional[float] = None,
-    default_quantity: Optional[float] = None,
+    # ============ Overage Fields ============
+    overage_calculation_option: Optional[
+        Literal["EndOfSmoothingPeriod", "PerBillingPeriod"]
+    ] = None,
+    overage_unused_units_credit_option: Optional[
+        Literal["NoCredit", "CreditBySpecificRate"]
+    ] = None,
+    number_of_period: Optional[int] = None,
+    smoothing_model: Optional[Literal["RollingWindow", "Rollover"]] = None,
+    # ============ Discount Fields ============
+    apply_discount_to: Optional[
+        Literal[
+            "ONETIME",
+            "RECURRING",
+            "USAGE",
+            "ONETIMERECURRING",
+            "ONETIMEUSAGE",
+            "RECURRINGUSAGE",
+            "ONETIMERECURRINGUSAGE",
+        ]
+    ] = None,
+    discount_level: Optional[Literal["rateplan", "subscription", "account"]] = None,
+    is_stacked_discount: Optional[bool] = None,
+    apply_to_billing_period_partially: Optional[bool] = None,
+    reflect_discount_in_net_amount: Optional[bool] = None,
+    use_discount_specific_accounting_code: Optional[bool] = None,
+    # ============ Accounting Fields ============
+    accounting_code: Optional[str] = None,
+    deferred_revenue_account: Optional[str] = None,
+    recognized_revenue_account: Optional[str] = None,
+    # ============ Revenue Recognition Fields ============
+    revenue_recognition_rule_name: Optional[
+        Literal["Recognize upon invoicing", "Recognize daily over time"]
+    ] = None,
+    rev_rec_code: Optional[str] = None,
+    rev_rec_trigger_condition: Optional[
+        Literal[
+            "ContractEffectiveDate", "ServiceActivationDate", "CustomerAcceptanceDate"
+        ]
+    ] = None,
+    exclude_item_billing_from_revenue_accounting: Optional[bool] = None,
+    exclude_item_booking_from_revenue_accounting: Optional[bool] = None,
+    is_allocation_eligible: Optional[bool] = None,
+    is_unbilled: Optional[bool] = None,
+    legacy_revenue_reporting: Optional[bool] = None,
+    revenue_recognition_timing: Optional[str] = None,
+    revenue_amortization_method: Optional[str] = None,
+    product_category: Optional[str] = None,
+    product_class: Optional[str] = None,
+    product_family: Optional[str] = None,
+    product_line: Optional[str] = None,
+    # ============ Tax Fields ============
+    taxable: Optional[bool] = None,
+    tax_code: Optional[str] = None,
+    tax_mode: Optional[Literal["TaxExclusive", "TaxInclusive"]] = None,
+    # ============ Proration Fields ============
+    proration_option: Optional[
+        Literal[
+            "NoProration",
+            "TimeBasedProration",
+            "DefaultFromTenantSetting",
+            "ChargeFullPeriod",
+        ]
+    ] = None,
+    # ============ Prepaid with Drawdown Fields ============
+    charge_function: Optional[
+        Literal[
+            "Standard",
+            "Prepayment",
+            "CommitmentTrueUp",
+            "Drawdown",
+            "CreditCommitment",
+            "DrawdownAndCreditCommitment",
+        ]
+    ] = None,
+    commitment_type: Optional[Literal["UNIT", "CURRENCY"]] = None,
+    credit_option: Optional[
+        Literal["TimeBased", "ConsumptionBased", "FullCreditBack"]
+    ] = None,
+    drawdown_rate: Optional[float] = None,
+    drawdown_uom: Optional[str] = None,
+    is_prepaid: Optional[bool] = None,
+    prepaid_operation_type: Optional[Literal["topup", "drawdown"]] = None,
+    prepaid_quantity: Optional[float] = None,
+    prepaid_total_quantity: Optional[float] = None,
+    prepaid_uom: Optional[str] = None,
+    validity_period_type: Optional[
+        Literal["SUBSCRIPTION_TERM", "ANNUAL", "SEMI_ANNUAL", "QUARTER", "MONTH"]
+    ] = None,
+    is_rollover: Optional[bool] = None,
+    rollover_apply: Optional[Literal["ApplyFirst", "ApplyLast"]] = None,
+    rollover_periods: Optional[int] = None,
+    rollover_period_length: Optional[int] = None,
+    # ============ Attribute-based Pricing ============
+    formula: Optional[str] = None,
+    charge_model_configuration: Optional[Dict[str, Any]] = None,
+    delivery_schedule: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Generate charge creation payload per Zuora v1 API schema.
 
@@ -1939,7 +2092,6 @@ def create_charge(
     - BillCycleType: DefaultFromCustomer
     - TriggerEvent: ContractEffective
     - BillingTiming: In Advance for Recurring/OneTime charges (not applicable to Usage)
-    - BillingPeriod: Month (for Recurring charges)
     - Currency: USD
     - RatingGroup: ByBillingPeriod for tiered/volume Usage charges
 
@@ -1950,11 +2102,16 @@ def create_charge(
     - Volume Pricing: All-units pricing - entire qty priced at one tier's rate (use 'tiers' parameter)
     - Overage Pricing: X units included, then $Y per unit (use 'included_units' + 'overage_price')
     - Tiered with Overage: Tiered pricing + overage (use 'tiers' + 'included_units' + 'overage_price')
+    - Discount-Fixed Amount / Discount-Percentage: Use discount fields
+    - Delivery Pricing: Use delivery_schedule
+    - Multi-Attribute Pricing: Use charge_model_configuration
 
     Args:
         rate_plan_id: Zuora rate plan ID OR object reference (e.g., '@{ProductRatePlan[0].Id}')
         rate_plan_index: Index of rate plan in current batch (0-based) to auto-generate object reference
-        name: Charge name
+        name: Charge name (max 100 chars)
+        description: Charge description (max 500 chars)
+        product_rate_plan_charge_number: Natural key (max 100 chars). Auto-generated if null.
         charge_type: OneTime, Recurring, or Usage
         charge_model: Pricing model (accepts simplified names like 'FlatFee' or full names like 'Flat Fee Pricing')
         price: Price amount (for single-tier pricing: Flat Fee, Per Unit, or overage rate)
@@ -1966,31 +2123,89 @@ def create_charge(
                - PriceFormat: "Per Unit" or "Flat Fee" (default: "Per Unit")
                - Currency: Override currency for this tier (default: uses charge currency)
                Simplified format (auto-calculates boundaries):
-               - units: EndingUnit for this tier (omit or None for unlimited)
-               - price: Price for this tier
-        included_units: Number of units included before overage pricing kicks in.
-                       Used with Overage Pricing and Tiered with Overage Pricing.
-        overage_price: Price per unit after included units are consumed.
-                      Used with Overage Pricing and Tiered with Overage Pricing.
-        billing_period: Month, Quarter, Annual, etc.
-        billing_timing: In Advance or In Arrears (defaults to In Arrears for Usage, In Advance otherwise)
-        bill_cycle_type: When to bill
+                - units: EndingUnit for this tier (omit or None for unlimited)
+                - price: Price for this tier
+        currency: Single currency code (for backward compatibility). Prefer 'currencies' for new code.
+        currencies: List of currency codes for multi-currency support (e.g., ["USD", "EUR"])
+        prices: Dict mapping currency to price (e.g., {"USD": 49.0, "EUR": 45.0})
+               Used with 'currencies' for different prices per currency.
+               If not provided, 'price' is used for all currencies.
+        default_quantity: Default quantity of units. Required for Per Unit/Volume/Tiered Pricing. Defaults to 1.
+        min_quantity: Minimum units allowed (max 16 chars)
+        max_quantity: Maximum units allowed (max 16 chars)
+        included_units: Units included before overage pricing (for Overage models)
+        overage_price: Base price per unit after included units consumed (for Overage models)
+        overage_prices: Dict mapping currency to overage price (e.g., {"USD": 0.003, "EUR": 0.003})
+                       Used with 'currencies' for different overage prices per currency.
+        billing_period: Billing period for recurring charges
+        billing_timing: 'In Advance' or 'In Arrears'. Not for Usage charges.
+        bill_cycle_type: How to determine billing day
+        bill_cycle_day: Bill cycle day (1-31). Account BCD can override.
+        weekly_bill_cycle_day: Weekly bill cycle day. Required when BillCycleType='SpecificDayofWeek'
+        specific_billing_period: Custom months/weeks when BillingPeriod='Specific Months/Weeks'
+        billing_period_alignment: Align charges within subscription
+        list_price_base: List price base. Defaults to BillingPeriod if not set.
+        specific_list_price_base: Months for list price base (1-120). Required when ListPriceBase='Per Specific Months'
         trigger_event: When to start billing
-        uom: Unit of measure for usage charges
-        description: Charge description
-        currency: Currency code (default: USD)
-        rating_group: How to aggregate usage for rating (ByBillingPeriod, ByUsageStartDate, etc.)
-                     Auto-set to ByBillingPeriod for tiered/volume Usage charges
-        price_increase_option: Price increase behavior on renewal:
-                              - "FromTenantPercentageValue": Use tenant's default percentage setting
-                              - "SpecificPercentageValue": Use price_increase_percentage value
-        price_increase_percentage: Percentage to increase/decrease price on renewal.
-                                  Value must be between -100 and 100 (e.g., 10 for 10% increase).
-                                  Required when price_increase_option="SpecificPercentageValue".
-                                  If provided without price_increase_option, auto-sets to "SpecificPercentageValue"
-                                  and sets UseTenantDefaultForPriceChange to false.
-        default_quantity: Default quantity of units. Required for Per Unit Pricing, Volume Pricing,
-                         and Tiered Pricing models. Defaults to 1 if not specified for these models.
+        end_date_condition: 'SubscriptionEnd' or 'FixedPeriod'
+        up_to_periods: Charge duration (0-65535). Required when EndDateCondition='FixedPeriod'
+        up_to_periods_type: Period type for up_to_periods
+        price_change_option: Automatic price change on renewal
+        price_increase_option: Price increase on renewal behavior
+        price_increase_percentage: Percentage to increase/decrease price on renewal (-100 to 100)
+        use_tenant_default_for_price_change: Set false when using specific percentage
+        uom: Unit of measure for usage charges (max 25 chars)
+        rating_group: How to aggregate usage for rating
+        usage_record_rating_option: When to rate usage records
+        overage_calculation_option: When to calculate overage
+        overage_unused_units_credit_option: Credit unused units
+        number_of_period: Periods for overage smoothing
+        smoothing_model: Overage smoothing model
+        apply_discount_to: Charge types discount applies to (for discount models)
+        discount_level: Discount scope: 'rateplan', 'subscription', or 'account'
+        is_stacked_discount: Calculate as stacked discount (Discount-Percentage only)
+        apply_to_billing_period_partially: Allow discount duration aligned with billing period partially
+        reflect_discount_in_net_amount: Reflect discount in net amount for Zuora Revenue
+        use_discount_specific_accounting_code: Use specific accounting code for discount charge
+        accounting_code: Accounting code (max 100 chars)
+        deferred_revenue_account: Deferred revenue account name (max 100 chars)
+        recognized_revenue_account: Recognized revenue account name (max 100 chars)
+        revenue_recognition_rule_name: 'Recognize upon invoicing' or 'Recognize daily over time'
+        rev_rec_code: Revenue recognition code (max 70 chars)
+        rev_rec_trigger_condition: When revenue recognition begins
+        exclude_item_billing_from_revenue_accounting: Exclude billing items from revenue accounting
+        exclude_item_booking_from_revenue_accounting: Exclude booking items from revenue accounting
+        is_allocation_eligible: Allocation eligible for revenue recognition
+        is_unbilled: Unbilled accounting
+        legacy_revenue_reporting: Legacy revenue reporting
+        revenue_recognition_timing: Revenue recognition timing
+        revenue_amortization_method: Revenue amortization method
+        product_category: Product category for Zuora Revenue integration
+        product_class: Product class for Zuora Revenue integration
+        product_family: Product family for Zuora Revenue integration
+        product_line: Product line for Zuora Revenue integration
+        taxable: Whether charge is taxable. Requires TaxMode and TaxCode if true.
+        tax_code: Tax code (max 64 chars). Required when Taxable=true.
+        tax_mode: 'TaxExclusive' or 'TaxInclusive'. Required when Taxable=true.
+        proration_option: Charge-level proration option
+        charge_function: Charge function type (Prepaid with Drawdown feature)
+        commitment_type: Commitment type: 'UNIT' or 'CURRENCY'
+        credit_option: Credit calculation: 'TimeBased', 'ConsumptionBased', 'FullCreditBack'
+        drawdown_rate: Conversion rate between Usage UOM and Drawdown UOM
+        drawdown_uom: Drawdown unit of measure
+        is_prepaid: Whether this is a prepayment (topup) or drawdown charge
+        prepaid_operation_type: 'topup' or 'drawdown'
+        prepaid_quantity: Units included in prepayment charge
+        prepaid_total_quantity: Total units available during validity period
+        prepaid_uom: Unit of measure for prepayment
+        validity_period_type: Prepaid validity period
+        is_rollover: Enable rollover for prepaid
+        rollover_apply: Rollover priority: 'ApplyFirst' or 'ApplyLast'
+        rollover_periods: Number of rollover periods (max 3)
+        rollover_period_length: Rollover fund period length
+        formula: Price lookup formula for Attribute-based Pricing
+        charge_model_configuration: Container for charge model configuration (Multi-Attribute/Pre-Rated Pricing)
+        delivery_schedule: Delivery schedule configuration (Delivery Pricing)
 
     Examples:
         # Flat Fee Pricing (single price)
@@ -2086,9 +2301,37 @@ def create_charge(
     # Track defaults applied for transparency
     defaults_applied: List[Dict[str, str]] = []
 
-    # Track if user provided currency explicitly (vs using default parameter)
-    # We check if currency differs from default "USD" - if same, it might be defaulted
-    user_provided_currency = currency != "USD"
+    # ============ Currency Resolution ============
+    # Priority: currencies > currency > None (will add placeholder/warning)
+    active_currencies: Optional[List[str]] = None
+    currency_prices: Dict[str, float] = {}
+    overage_currency_prices: Dict[str, float] = {}
+
+    if currencies:
+        # Multi-currency mode
+        active_currencies = currencies
+        if prices:
+            currency_prices = prices
+        elif price is not None:
+            # Same price for all currencies if not specified per-currency
+            currency_prices = {c: price for c in currencies}
+        # Handle overage prices for multi-currency
+        if overage_prices:
+            overage_currency_prices = overage_prices
+        elif overage_price is not None:
+            overage_currency_prices = {c: overage_price for c in currencies}
+    elif currency:
+        # Single currency mode (backward compatibility)
+        active_currencies = [currency]
+        if price is not None:
+            currency_prices = {currency: price}
+        if overage_price is not None:
+            overage_currency_prices = {currency: overage_price}
+    # If neither currencies nor currency is provided, active_currencies stays None
+    # and we'll add a warning later when generating tier data
+
+    # Track if user provided currency explicitly
+    user_provided_currency = currencies is not None or currency is not None
 
     # Handle ProductRatePlanId
     if rate_plan_id:
@@ -2168,28 +2411,30 @@ def create_charge(
     payload_data["TriggerEvent"] = trigger_event
 
     # Smart default for BillingTiming based on charge type
-    # Note: Usage charges do NOT use BillingTiming per Zuora API
-    if billing_timing is not None and charge_type != "Usage":
-        payload_data["BillingTiming"] = billing_timing
-    elif charge_type == "Usage":
-        # Usage charges do NOT use BillingTiming
-        pass
-    else:
-        payload_data["BillingTiming"] = "In Advance"
-        defaults_applied.append(
-            {
-                "field": "BillingTiming",
-                "value": "In Advance",
-            }
-        )
+    # Note: Only Recurring charges use BillingTiming per Zuora API
+    # OneTime and Usage charges do NOT use BillingTiming
+    if charge_type == "Recurring":
+        if billing_timing is not None:
+            payload_data["BillingTiming"] = billing_timing
+        else:
+            payload_data["BillingTiming"] = "In Advance"
+            defaults_applied.append(
+                {
+                    "field": "BillingTiming",
+                    "value": "In Advance",
+                }
+            )
+    # OneTime and Usage charges do NOT use BillingTiming - skip entirely
 
     if description:
         payload_data["Description"] = description
 
-    # Billing period - only set if explicitly provided
-    # If not provided for Recurring charges, validation will create a placeholder
-    if billing_period:
-        payload_data["BillingPeriod"] = billing_period
+    # Billing period - only applicable for Recurring charges
+    # OneTime and Usage charges do NOT use BillingPeriod
+    if charge_type == "Recurring":
+        if billing_period:
+            payload_data["BillingPeriod"] = billing_period
+        # If not provided for Recurring charges, validation will create a placeholder
 
     if uom:
         # Auto-correct UOM to valid tenant UOM
@@ -2235,28 +2480,26 @@ def create_charge(
             }
         )
 
-    # Track currency default if user didn't explicitly provide it
+    # Track currency if user didn't explicitly provide it
     if not user_provided_currency:
-        from .zuora_settings import get_default_currency
-
-        tenant_default = get_default_currency()
-        if currency == tenant_default:
+        # Currency was not provided - add a warning
+        warnings_pre: List[str] = []
+        warnings_pre.append(
+            "Currency not specified. Please provide 'currency' or 'currencies' parameter."
+        )
+    else:
+        warnings_pre = []
+        if active_currencies:
+            currencies_str = ", ".join(active_currencies)
             defaults_applied.append(
                 {
                     "field": "Currency",
-                    "value": f"{currency} (tenant default)",
-                }
-            )
-        else:
-            defaults_applied.append(
-                {
-                    "field": "Currency",
-                    "value": currency,
+                    "value": currencies_str,
                 }
             )
 
     # Collect warnings (tier validation warnings will be added here)
-    warnings = []
+    warnings: List[str] = warnings_pre.copy() if not user_provided_currency else []
 
     # Handle IncludedUnits (for Overage and Tiered with Overage pricing)
     if included_units is not None:
@@ -2267,90 +2510,161 @@ def create_charge(
     if tiers:
         # Tiered, Volume, or Tiered with Overage pricing
         # Use _normalize_tiers to ensure all required fields are present
-        normalized_tiers, tier_warnings = _normalize_tiers(tiers, currency)
-        warnings.extend(tier_warnings)
+        # For multi-currency, we need to normalize tiers for each currency
+        all_normalized_tiers: List[Dict[str, Any]] = []
+        if active_currencies:
+            for curr in active_currencies:
+                normalized_tiers, tier_warnings = _normalize_tiers(tiers, curr)
+                warnings.extend(tier_warnings)
+                all_normalized_tiers.extend(normalized_tiers)
 
-        # For Tiered with Overage, add an overage tier at the end if overage_price is provided
-        if is_tiered_with_overage and overage_price is not None:
-            last_tier_num = len(normalized_tiers)
-            last_ending = (
-                normalized_tiers[-1].get("EndingUnit") if normalized_tiers else None
+                # For Tiered with Overage, add an overage tier at the end if overage_price is provided
+                if is_tiered_with_overage:
+                    curr_overage_price = overage_currency_prices.get(
+                        curr, overage_price
+                    )
+                    if curr_overage_price is not None:
+                        # Find the last tier for this currency
+                        curr_tiers = [
+                            t for t in all_normalized_tiers if t.get("Currency") == curr
+                        ]
+                        last_tier_num = len(curr_tiers)
+                        last_ending = (
+                            curr_tiers[-1].get("EndingUnit") if curr_tiers else None
+                        )
+
+                        # Calculate overage tier starting unit
+                        if last_ending is not None:
+                            overage_start = last_ending + 1
+                            all_normalized_tiers.append(
+                                {
+                                    "Currency": curr,
+                                    "Price": curr_overage_price,
+                                    "Tier": last_tier_num + 1,
+                                    "StartingUnit": overage_start,
+                                    "PriceFormat": "Per Unit",
+                                    # No EndingUnit = unlimited overage tier
+                                }
+                            )
+                        elif curr == active_currencies[0]:
+                            # Only warn once (for first currency)
+                            warnings.append(
+                                "Last tier has no EndingUnit (unlimited). Overage tier will not be added. "
+                                "Set EndingUnit on the last tier to enable overage pricing after that tier."
+                            )
+        else:
+            warnings.append(
+                "Currency not specified for tiered pricing. "
+                "Please provide 'currency' or 'currencies' parameter."
             )
 
-            # Calculate overage tier starting unit
-            if last_ending is not None:
-                overage_start = last_ending + 1
-            else:
-                # Last tier is already unlimited - warn user
-                warnings.append(
-                    "Last tier has no EndingUnit (unlimited). Overage tier will not be added. "
-                    "Set EndingUnit on the last tier to enable overage pricing after that tier."
-                )
-                overage_start = None
-
-            if overage_start is not None:
-                normalized_tiers.append(
-                    {
-                        "Currency": currency,
-                        "Price": overage_price,
-                        "Tier": last_tier_num + 1,
-                        "StartingUnit": overage_start,
-                        "PriceFormat": "Per Unit",
-                        # No EndingUnit = unlimited overage tier
-                    }
-                )
-
-        payload_data["ProductRatePlanChargeTierData"] = {
-            "ProductRatePlanChargeTier": normalized_tiers
-        }
+        if all_normalized_tiers:
+            payload_data["ProductRatePlanChargeTierData"] = {
+                "ProductRatePlanChargeTier": all_normalized_tiers
+            }
 
     elif is_overage:
-        # Pure Overage Pricing: included units + single overage tier
+        # Overage Pricing: IncludedUnits at charge level + simple price tier
+        # Per Zuora docs: only Currency and Price needed in tier for Overage Pricing
         overage_tier_price = overage_price if overage_price is not None else price
-        if overage_tier_price is not None:
-            payload_data["ProductRatePlanChargeTierData"] = {
-                "ProductRatePlanChargeTier": [
+        if overage_tier_price is not None and active_currencies:
+            tier_list: List[Dict[str, Any]] = []
+            for curr in active_currencies:
+                # Get currency-specific overage price, fallback to base overage price
+                curr_price = overage_currency_prices.get(curr, overage_tier_price)
+                tier_list.append(
                     {
-                        "Currency": currency,
-                        "Price": overage_tier_price,
-                        "PriceFormat": "Per Unit",
-                        "StartingUnit": 1,
-                        "Tier": 1,
+                        "Currency": curr,
+                        "Price": curr_price,
                     }
-                ]
+                )
+            payload_data["ProductRatePlanChargeTierData"] = {
+                "ProductRatePlanChargeTier": tier_list
             }
-        else:
+        elif overage_tier_price is None:
             warnings.append(
                 "Overage Pricing requires a price for overage units. "
                 "Please specify 'overage_price' or 'price' parameter."
             )
+        else:
+            warnings.append(
+                "Currency not specified for Overage Pricing. "
+                "Please provide 'currency' or 'currencies' parameter."
+            )
 
-    elif price is not None:
+    elif price is not None or currency_prices:
         # Single tier pricing - structure differs by charge model
         if normalized_charge_model == "Flat Fee Pricing":
             # Flat Fee: minimal tier structure per Zuora docs
             # No StartingUnit, Tier, or PriceFormat needed
-            payload_data["ProductRatePlanChargeTierData"] = {
-                "ProductRatePlanChargeTier": [
-                    {
-                        "Currency": currency,
-                        "Price": price,
+            if active_currencies:
+                tier_list = []
+                for curr in active_currencies:
+                    curr_price = currency_prices.get(curr, price)
+                    if curr_price is not None:
+                        tier_list.append(
+                            {
+                                "Currency": curr,
+                                "Price": curr_price,
+                            }
+                        )
+                if tier_list:
+                    payload_data["ProductRatePlanChargeTierData"] = {
+                        "ProductRatePlanChargeTier": tier_list
                     }
-                ]
-            }
+            else:
+                warnings.append(
+                    "Currency not specified for Flat Fee Pricing. "
+                    "Please provide 'currency' or 'currencies' parameter."
+                )
+        elif normalized_charge_model == "Per Unit Pricing":
+            # Per Unit Pricing: simple price per unit, no tier boundaries needed
+            # Per Zuora docs: only Currency and Price needed
+            if active_currencies:
+                tier_list = []
+                for curr in active_currencies:
+                    curr_price = currency_prices.get(curr, price)
+                    if curr_price is not None:
+                        tier_list.append(
+                            {
+                                "Currency": curr,
+                                "Price": curr_price,
+                            }
+                        )
+                if tier_list:
+                    payload_data["ProductRatePlanChargeTierData"] = {
+                        "ProductRatePlanChargeTier": tier_list
+                    }
+            else:
+                warnings.append(
+                    "Currency not specified for Per Unit Pricing. "
+                    "Please provide 'currency' or 'currencies' parameter."
+                )
         else:
-            # Per Unit and other unit-based models need full tier structure
-            payload_data["ProductRatePlanChargeTierData"] = {
-                "ProductRatePlanChargeTier": [
-                    {
-                        "Currency": currency,
-                        "Price": price,
-                        "StartingUnit": 1,
-                        "PriceFormat": "Per Unit",
-                        "Tier": 1,
+            # Other unit-based models - keep full tier structure for safety
+            if active_currencies:
+                tier_list = []
+                for curr in active_currencies:
+                    curr_price = currency_prices.get(curr, price)
+                    if curr_price is not None:
+                        tier_list.append(
+                            {
+                                "Currency": curr,
+                                "Price": curr_price,
+                                "StartingUnit": 1,
+                                "PriceFormat": "Per Unit",
+                                "Tier": 1,
+                            }
+                        )
+                if tier_list:
+                    payload_data["ProductRatePlanChargeTierData"] = {
+                        "ProductRatePlanChargeTier": tier_list
                     }
-                ]
-            }
+            else:
+                warnings.append(
+                    "Currency not specified. "
+                    "Please provide 'currency' or 'currencies' parameter."
+                )
 
     # Price increase on renewal (for termed subscriptions)
     # See: https://developer.zuora.com/v1-api-reference/api/operation/Object_POSTProductRatePlanCharge/
@@ -2387,6 +2701,16 @@ def create_charge(
     if price_increase_option:
         payload_data["PriceIncreaseOption"] = price_increase_option
 
+    # PriceChangeOption (different from PriceIncreaseOption)
+    if price_change_option:
+        payload_data["PriceChangeOption"] = price_change_option
+
+    # UseTenantDefaultForPriceChange - explicit override if provided
+    if use_tenant_default_for_price_change is not None:
+        payload_data["UseTenantDefaultForPriceChange"] = (
+            use_tenant_default_for_price_change
+        )
+
     # DefaultQuantity - required for Per Unit Pricing, Volume Pricing, Tiered Pricing
     # See: https://developer.zuora.com/v1-api-reference/api/operation/Object_POSTProductRatePlanCharge/
     if default_quantity is not None:
@@ -2404,6 +2728,166 @@ def create_charge(
                 "value": f"1 (required for {normalized_charge_model})",
             }
         )
+
+    # ============ Additional Pricing Fields ============
+    if min_quantity is not None:
+        payload_data["MinQuantity"] = min_quantity
+    if max_quantity is not None:
+        payload_data["MaxQuantity"] = max_quantity
+
+    # ============ Additional Billing Configuration ============
+    if bill_cycle_day is not None:
+        payload_data["BillCycleDay"] = bill_cycle_day
+    if weekly_bill_cycle_day:
+        payload_data["WeeklyBillCycleDay"] = weekly_bill_cycle_day
+    if specific_billing_period is not None:
+        payload_data["SpecificBillingPeriod"] = specific_billing_period
+    if billing_period_alignment:
+        payload_data["BillingPeriodAlignment"] = billing_period_alignment
+    if list_price_base:
+        payload_data["ListPriceBase"] = list_price_base
+    if specific_list_price_base is not None:
+        payload_data["SpecificListPriceBase"] = specific_list_price_base
+
+    # ============ Charge Duration ============
+    if end_date_condition:
+        payload_data["EndDateCondition"] = end_date_condition
+    if up_to_periods is not None:
+        payload_data["UpToPeriods"] = up_to_periods
+    if up_to_periods_type:
+        payload_data["UpToPeriodsType"] = up_to_periods_type
+
+    # ============ Usage Charge Fields ============
+    if usage_record_rating_option:
+        payload_data["UsageRecordRatingOption"] = usage_record_rating_option
+
+    # ============ Overage Fields ============
+    if overage_calculation_option:
+        payload_data["OverageCalculationOption"] = overage_calculation_option
+    if overage_unused_units_credit_option:
+        payload_data["OverageUnusedUnitsCreditOption"] = (
+            overage_unused_units_credit_option
+        )
+    if number_of_period is not None:
+        payload_data["NumberOfPeriod"] = number_of_period
+    if smoothing_model:
+        payload_data["SmoothingModel"] = smoothing_model
+
+    # ============ Discount Fields ============
+    if apply_discount_to:
+        payload_data["ApplyDiscountTo"] = apply_discount_to
+    if discount_level:
+        payload_data["DiscountLevel"] = discount_level
+    if is_stacked_discount is not None:
+        payload_data["IsStackedDiscount"] = is_stacked_discount
+    if apply_to_billing_period_partially is not None:
+        payload_data["ApplyToBillingPeriodPartially"] = (
+            apply_to_billing_period_partially
+        )
+    if reflect_discount_in_net_amount is not None:
+        payload_data["ReflectDiscountInNetAmount"] = reflect_discount_in_net_amount
+    if use_discount_specific_accounting_code is not None:
+        payload_data["UseDiscountSpecificAccountingCode"] = (
+            use_discount_specific_accounting_code
+        )
+
+    # ============ Accounting Fields ============
+    if accounting_code:
+        payload_data["AccountingCode"] = accounting_code
+    if deferred_revenue_account:
+        payload_data["DeferredRevenueAccount"] = deferred_revenue_account
+    if recognized_revenue_account:
+        payload_data["RecognizedRevenueAccount"] = recognized_revenue_account
+
+    # ============ Revenue Recognition Fields ============
+    if revenue_recognition_rule_name:
+        payload_data["RevenueRecognitionRuleName"] = revenue_recognition_rule_name
+    if rev_rec_code:
+        payload_data["RevRecCode"] = rev_rec_code
+    if rev_rec_trigger_condition:
+        payload_data["RevRecTriggerCondition"] = rev_rec_trigger_condition
+    if exclude_item_billing_from_revenue_accounting is not None:
+        payload_data["ExcludeItemBillingFromRevenueAccounting"] = (
+            exclude_item_billing_from_revenue_accounting
+        )
+    if exclude_item_booking_from_revenue_accounting is not None:
+        payload_data["ExcludeItemBookingFromRevenueAccounting"] = (
+            exclude_item_booking_from_revenue_accounting
+        )
+    if is_allocation_eligible is not None:
+        payload_data["IsAllocationEligible"] = is_allocation_eligible
+    if is_unbilled is not None:
+        payload_data["IsUnbilled"] = is_unbilled
+    if legacy_revenue_reporting is not None:
+        payload_data["LegacyRevenueReporting"] = legacy_revenue_reporting
+    if revenue_recognition_timing:
+        payload_data["RevenueRecognitionTiming"] = revenue_recognition_timing
+    if revenue_amortization_method:
+        payload_data["RevenueAmortizationMethod"] = revenue_amortization_method
+    if product_category:
+        payload_data["ProductCategory"] = product_category
+    if product_class:
+        payload_data["ProductClass"] = product_class
+    if product_family:
+        payload_data["ProductFamily"] = product_family
+    if product_line:
+        payload_data["ProductLine"] = product_line
+
+    # ============ Tax Fields ============
+    if taxable is not None:
+        payload_data["Taxable"] = taxable
+    if tax_code:
+        payload_data["TaxCode"] = tax_code
+    if tax_mode:
+        payload_data["TaxMode"] = tax_mode
+
+    # ============ Proration Fields ============
+    if proration_option:
+        payload_data["ProrationOption"] = proration_option
+
+    # ============ Prepaid with Drawdown Fields ============
+    if charge_function:
+        payload_data["ChargeFunction"] = charge_function
+    if commitment_type:
+        payload_data["CommitmentType"] = commitment_type
+    if credit_option:
+        payload_data["CreditOption"] = credit_option
+    if drawdown_rate is not None:
+        payload_data["DrawdownRate"] = drawdown_rate
+    if drawdown_uom:
+        payload_data["DrawdownUom"] = drawdown_uom
+    if is_prepaid is not None:
+        payload_data["IsPrepaid"] = is_prepaid
+    if prepaid_operation_type:
+        payload_data["PrepaidOperationType"] = prepaid_operation_type
+    if prepaid_quantity is not None:
+        payload_data["PrepaidQuantity"] = prepaid_quantity
+    if prepaid_total_quantity is not None:
+        payload_data["PrepaidTotalQuantity"] = prepaid_total_quantity
+    if prepaid_uom:
+        payload_data["PrepaidUom"] = prepaid_uom
+    if validity_period_type:
+        payload_data["ValidityPeriodType"] = validity_period_type
+    if is_rollover is not None:
+        payload_data["IsRollover"] = is_rollover
+    if rollover_apply:
+        payload_data["RolloverApply"] = rollover_apply
+    if rollover_periods is not None:
+        payload_data["RolloverPeriods"] = rollover_periods
+    if rollover_period_length is not None:
+        payload_data["RolloverPeriodLength"] = rollover_period_length
+
+    # ============ Identification Fields ============
+    if product_rate_plan_charge_number:
+        payload_data["ProductRatePlanChargeNumber"] = product_rate_plan_charge_number
+
+    # ============ Attribute-based Pricing ============
+    if formula:
+        payload_data["Formula"] = formula
+    if charge_model_configuration:
+        payload_data["ChargeModelConfiguration"] = charge_model_configuration
+    if delivery_schedule:
+        payload_data["DeliverySchedule"] = delivery_schedule
 
     if name:
         # Validate name length
@@ -2599,7 +3083,7 @@ In the top-up charge pricing configuration:
 Standard top-up of ${prepaid_amount:,.2f} and {prepaid_quantity:,.0f} {prepaid_uom}.
 """
 
-        guide += f"""
+        guide += """
 3. **Notification Rule** (trigger for workflow):
    - Event: "Usage Record Creation" or "PrepaidBalanceLow"
    - Action: Trigger workflow to check balance
@@ -3589,7 +4073,7 @@ def generate_multi_attribute_pricing(
     for attr in attributes:
         guide += f"**{attr['name']}**: {', '.join(attr.get('values', []))}\n"
 
-    guide += f"""
+    guide += """
 ---
 
 ### Single-Attribute Price Matrix
@@ -3601,7 +4085,7 @@ def generate_multi_attribute_pricing(
         guide += f"| {key} | ${price:,.2f} |\n"
 
     if combined_matrix:
-        guide += f"""
+        guide += """
 ---
 
 ### Combined Price Matrix (Example)
@@ -3655,25 +4139,25 @@ def generate_multi_attribute_pricing(
 ```
 """
 
-    guide += f"""
+    guide += """
 **Step 2: Create Price Lookup Field**
 ```json
-{{
+{
     "name": "CalculatedPrice__c",
     "label": "Calculated Price",
     "type": "Number",
     "description": "Pre-calculated price based on attributes"
-}}
+}
 ```
 
 **Step 3: Use in Charge Pricing**
 ```json
-{{
-    "pricing": [{{
+{
+    "pricing": [{
         "currency": "USD",
         "price": "fieldLookup('account', 'CalculatedPrice__c')"
-    }}]
-}}
+    }]
+}
 ```
 
 **Note:** You'll need a workflow or external process to calculate and update `CalculatedPrice__c` based on the attribute combination.
@@ -3736,7 +4220,7 @@ Based on {len(attributes)} attribute(s) with {sum(len(a.get("values", [])) for a
 - Use API to calculate and pass price at subscription time
 """
 
-    guide += f"""
+    guide += """
 ---
 
 ### Validation Checklist
@@ -4232,7 +4716,7 @@ def get_zuora_documentation(
     for endpoint in doc.get("api_endpoints", []):
         output += f"- `{endpoint}`\n"
 
-    output += f"""
+    output += """
 ---
 
 ### Related Tools in Billing Architect

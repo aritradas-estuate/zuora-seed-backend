@@ -36,17 +36,17 @@ Comprehensive architecture and design documentation for the Zuora Seed Agent.
 zuora_seed_backend/
 ├── agentcore_app.py              # Entry point with @app.entrypoint decorator
 ├── agents/
-│   ├── zuora_agent.py            # Agent factory with persona-specific prompts
-│   ├── tools.py                  # 30+ LLM tools (~3,970 lines)
-│   ├── models.py                 # Pydantic models (~520 lines)
+│   ├── zuora_agent.py            # Agent factory with persona-specific prompts (~530 lines)
+│   ├── tools.py                  # 26 LLM tools (~4,650 lines)
+│   ├── models.py                 # Pydantic models (~970 lines)
 │   ├── zuora_client.py           # Zuora REST API client (~610 lines)
 │   ├── config.py                 # Environment configuration
-│   ├── zuora_settings.py         # Dynamic tenant settings cache
-│   ├── validation_schemas.py     # Payload validation & placeholders
-│   ├── validation_utils.py       # Date/ID/SKU validators
-│   ├── html_formatter.py         # Markdown to HTML conversion
-│   ├── cache.py                  # TTL-based API response caching
-│   └── observability.py          # OpenTelemetry tracing & metrics
+│   ├── zuora_settings.py         # Dynamic tenant settings cache (~370 lines)
+│   ├── validation_schemas.py     # Payload validation & placeholders (~590 lines)
+│   ├── validation_utils.py       # Date/ID/SKU validators (~320 lines)
+│   ├── html_formatter.py         # Markdown to HTML conversion (~560 lines)
+│   ├── cache.py                  # TTL-based API response caching (~260 lines)
+│   └── observability.py          # OpenTelemetry tracing & metrics (~320 lines)
 ├── test_agent.py                 # Interactive test harness
 └── test_placeholders.py          # Placeholder system tests
 ```
@@ -55,10 +55,10 @@ zuora_seed_backend/
 
 The agent supports two personas selected via `ChatRequest.persona`:
 
-| Persona | Purpose | Tools Available |
-|---------|---------|-----------------|
-| **ProductManager** | Execute Zuora API operations | SHARED_TOOLS + PROJECT_MANAGER_TOOLS |
-| **BillingArchitect** | Advisory-only configuration guidance | SHARED_TOOLS + BILLING_ARCHITECT_TOOLS |
+| Persona | Purpose | Tools Available | Tool Count |
+|---------|---------|-----------------|------------|
+| **ProductManager** | Execute Zuora API operations | SHARED_TOOLS + PROJECT_MANAGER_TOOLS | 8 + 9 = 17 |
+| **BillingArchitect** | Advisory-only configuration guidance | SHARED_TOOLS + BILLING_ARCHITECT_TOOLS | 8 + 9 = 17 |
 
 ---
 
@@ -66,18 +66,18 @@ The agent supports two personas selected via `ChatRequest.persona`:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              External Request                                    │
-│                        (HTTP via AWS Bedrock AgentCore)                          │
+│                              External Request                                   │
+│                        (HTTP via AWS Bedrock AgentCore)                         │
 └──────────────────────────────────┬──────────────────────────────────────────────┘
                                    │
                                    ▼
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                             agentcore_app.py                                     │
+│                             agentcore_app.py                                    │
 │  ┌─────────────────────────────────────────────────────────────────────────┐    │
-│  │ @app.entrypoint invoke(payload)                                          │    │
-│  │ • get_bounded_session_id() ─── Session rotation for performance          │    │
-│  │ • get_agent_for_persona() ──── Cached agent retrieval                    │    │
-│  │ • generate_mock_citations() ── Knowledge base citations                  │    │
+│  │ @app.entrypoint invoke(payload)                                         │    │
+│  │ • get_bounded_session_id() ─── Session rotation for performance         │    │
+│  │ • get_agent_for_persona() ──── Cached agent retrieval                   │    │
+│  │ • generate_mock_citations() ── Knowledge base citations                 │    │
 │  └─────────────────────────────────────────────────────────────────────────┘    │
 └──────────────────────────────────┬──────────────────────────────────────────────┘
                                    │
@@ -85,22 +85,22 @@ The agent supports two personas selected via `ChatRequest.persona`:
             │                                             │
             ▼                                             ▼
 ┌───────────────────────────┐               ┌───────────────────────────┐
-│   ProductManager Persona   │               │  BillingArchitect Persona  │
-│   (Executes API ops)       │               │   (Advisory only)          │
+│   ProductManager Persona  │               │  BillingArchitect Persona │
+│   (Executes API ops)      │               │   (Advisory only)         │
 └─────────────┬─────────────┘               └─────────────┬─────────────┘
               │                                           │
               └─────────────────────┬─────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                            agents/zuora_agent.py                                 │
+│                            agents/zuora_agent.py                                │
 │  ┌─────────────────────────────────────────────────────────────────────────┐    │
-│  │ create_agent(persona) ─────────────────── Agent factory                  │    │
-│  │ • _initialize_zuora_settings() ────────── Eager settings fetch           │    │
-│  │ • get_default_agent() ─────────────────── Legacy compatibility           │    │
-│  │ • SHARED_TOOLS ────────────────────────── Read-only tools                │    │
-│  │ • PROJECT_MANAGER_TOOLS ───────────────── CRUD tools                     │    │
-│  │ • BILLING_ARCHITECT_TOOLS ─────────────── Advisory tools                 │    │
+│  │ create_agent(persona) ─────────────────── Agent factory                 │    │
+│  │ • _initialize_zuora_settings() ────────── Eager settings fetch          │    │
+│  │ • get_default_agent() ─────────────────── Legacy compatibility          │    │
+│  │ • SHARED_TOOLS ────────────────────────── Read-only tools               │    │
+│  │ • PROJECT_MANAGER_TOOLS ───────────────── CRUD tools                    │    │
+│  │ • BILLING_ARCHITECT_TOOLS ─────────────── Advisory tools                │    │
 │  └─────────────────────────────────────────────────────────────────────────┘    │
 └──────────────────────────────────┬──────────────────────────────────────────────┘
                                    │
@@ -144,7 +144,7 @@ The agent supports two personas selected via `ChatRequest.persona`:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────┐
-│                           Complete Request Flow                                   │
+│                           Complete Request Flow                                  │
 └──────────────────────────────────────────────────────────────────────────────────┘
 
 1. HTTP Request (via AWS Bedrock AgentCore)
@@ -278,17 +278,17 @@ Creates and configures persona-specific Strands agents.
 
 | Constant | Contents | Used By |
 |----------|----------|---------|
-| `PROJECT_MANAGER_SYSTEM_PROMPT` | Instructions for ProductManager persona | `create_agent()` |
-| `BILLING_ARCHITECT_SYSTEM_PROMPT` | Instructions for BillingArchitect persona | `create_agent()` |
-| `SHARED_TOOLS` | `[get_current_date, get_zuora_environment_info, connect_to_zuora, list_zuora_products, get_zuora_product, get_zuora_rate_plan_details, get_payloads, list_payload_structure]` | `create_agent()` |
-| `PROJECT_MANAGER_TOOLS` | `[create_product, create_rate_plan, create_charge, update_zuora_product, update_zuora_rate_plan, update_zuora_charge, update_payload, create_payload]` | `create_agent()` |
-| `BILLING_ARCHITECT_TOOLS` | `[generate_prepaid_config, generate_workflow_config, generate_notification_rule, generate_order_payload, explain_field_lookup, generate_multi_attribute_pricing, generate_custom_field_definition, validate_billing_configuration, get_zuora_documentation]` | `create_agent()` |
+| `PROJECT_MANAGER_SYSTEM_PROMPT` | Instructions for ProductManager persona (includes tool efficiency rules, placeholder handling, expire product workflow) | `create_agent()` |
+| `BILLING_ARCHITECT_SYSTEM_PROMPT` | Instructions for BillingArchitect persona (advisory-only mode, minimal tool usage) | `create_agent()` |
+| `SHARED_TOOLS` | `[get_current_date, get_zuora_environment_info, connect_to_zuora, list_zuora_products, get_zuora_product, get_zuora_rate_plan_details, get_payloads, list_payload_structure]` (8 tools) | `create_agent()` |
+| `PROJECT_MANAGER_TOOLS` | `[create_product, create_rate_plan, create_charge, update_zuora_product, update_zuora_rate_plan, update_zuora_charge, expire_product, update_payload, create_payload]` (9 tools) | `create_agent()` |
+| `BILLING_ARCHITECT_TOOLS` | `[generate_prepaid_config, generate_workflow_config, generate_notification_rule, generate_order_payload, explain_field_lookup, generate_multi_attribute_pricing, generate_custom_field_definition, validate_billing_configuration, get_zuora_documentation]` (9 tools) | `create_agent()` |
 
 ---
 
-### 4.3 agents/tools.py (LLM Tools) - ~3,970 lines
+### 4.3 agents/tools.py (LLM Tools) - ~4,650 lines
 
-All tools available to the LLM agent, decorated with `@tool` from Strands.
+All tools available to the LLM agent, decorated with `@tool` from Strands. Total: **26 tools**.
 
 #### Constants
 
@@ -297,85 +297,104 @@ All tools available to the LLM agent, decorated with `@tool` from Strands.
 | `PAYLOADS_STATE_KEY` | `"zuora_api_payloads"` | State key for API payloads |
 | `ADVISORY_PAYLOADS_STATE_KEY` | `"advisory_payloads"` | State key for advisory payloads |
 | `CHARGE_MODEL_MAPPING` | `{"flat fee": "Flat Fee Pricing", ...}` | Maps friendly names to API values |
+| `CRUD_FIELD_MAPPING` | `{"name": "Name", "sku": "SKU", ...}` | Maps lowercase to PascalCase for CRUD API |
 
 #### Helper Functions (Internal)
 
-| Function | Line | Purpose | Parameters | Returns | Called From |
-|----------|------|---------|------------|---------|-------------|
-| `_find_existing_key(data, key)` | ~35 | Case-insensitive dict key lookup | `data: dict`, `key: str` | `Optional[str]` | `update_payload`, `create_payload` |
-| `_to_crud_field_name(field)` | ~74 | Convert to PascalCase for CRUD API | `field: str` | `str` | `update_payload` |
-| `_find_payload_by_name(payloads, name)` | ~90 | Fuzzy substring name matching | `payloads: List`, `name: str` | `Tuple[int, dict]` | `update_payload`, `update_zuora_*` |
-| `_count_payloads_by_type(payloads, api_type)` | ~156 | Count payloads of specific type | `payloads: List`, `api_type: str` | `int` | `_get_product_object_reference` |
-| `_get_product_object_reference(payloads, index)` | ~161 | Generate `@{Product[n].Id}` reference | `payloads: List`, `index: int` | `str` | `create_rate_plan` |
-| `_get_rate_plan_object_reference(payloads, index)` | ~193 | Generate `@{ProductRatePlan[n].Id}` reference | `payloads: List`, `index: int` | `str` | `create_charge` |
-| `_find_best_product_match(products, query)` | ~741 | Damerau-Levenshtein fuzzy matching | `products: List`, `query: str` | `Tuple[dict, float]` | `get_zuora_product` |
-| `_format_product_details(product)` | ~795 | Format product for display | `product: dict` | `str` | `get_zuora_product` |
-| `_normalize_charge_model(model)` | ~1363 | Map "flat fee" → "Flat Fee Pricing" | `model: str` | `str` | `create_charge` |
-| `_validate_tier_boundaries(tiers)` | ~1371 | Check tier gaps/overlaps | `tiers: List[dict]` | `Tuple[bool, str]` | `create_charge` |
-| `_normalize_tiers(tiers, model)` | ~1418 | Convert tier input to API format | `tiers: List`, `model: str` | `List[dict]` | `create_charge` |
-| `_infer_charge_model_conservative(charge_type, tiers, price, uom, included, overage)` | ~1500 | Conservative charge model inference | Various | `Tuple[str, str]` | `create_charge` |
-| `_normalize_uom(uom)` | ~1586 | Normalize UOM to valid tenant value | `uom: str` | `str` | `create_charge` |
-| `_get_charge_model_inference_reason(model, charge_type, has_tiers, has_uom)` | ~1624 | Human-readable inference explanation | Various | `str` | `create_charge` |
+| Function | Purpose | Parameters | Returns | Called From |
+|----------|---------|------------|---------|-------------|
+| `_find_existing_key(data, key)` | Case-insensitive dict key lookup | `data: dict`, `key: str` | `Optional[str]` | `update_payload`, `create_payload` |
+| `_to_crud_field_name(field)` | Convert to PascalCase for CRUD API | `field: str` | `str` | `update_payload` |
+| `_find_payload_by_name(payloads, name)` | Fuzzy substring name matching | `payloads: List`, `name: str` | `Tuple[int, dict]` | `update_payload`, `update_zuora_*` |
+| `validate_date_format(date_str)` | Check YYYY-MM-DD format | `date_str: str` | `bool` | `create_product`, `expire_product` |
+| `validate_date_range(start, end)` | Validate end > start | `start: str`, `end: str` | `bool` | `create_product`, `create_rate_plan` |
+| `validate_zuora_id(id_str)` | Check valid Zuora ID or object ref | `id_str: str` | `bool` | `create_rate_plan`, `create_charge` |
+| `validate_sku_format(sku)` | Validate SKU characters | `sku: str` | `bool` | `create_product` |
+| `_count_payloads_by_type(payloads, api_type)` | Count payloads of specific type | `payloads: List`, `api_type: str` | `int` | `_get_product_object_reference` |
+| `_get_product_object_reference(payloads, index)` | Generate `@{Product[n].Id}` reference | `payloads: List`, `index: int` | `str` | `create_rate_plan` |
+| `_get_rate_plan_object_reference(payloads, index)` | Generate `@{ProductRatePlan[n].Id}` reference | `payloads: List`, `index: int` | `str` | `create_charge` |
+| `_find_best_product_match(products, query)` | Damerau-Levenshtein fuzzy matching | `products: List`, `query: str` | `Tuple[dict, float]` | `get_zuora_product` |
+| `_format_product_details(product)` | Format product for display | `product: dict` | `str` | `get_zuora_product` |
+| `_normalize_charge_model(model)` | Map "flat fee" → "Flat Fee Pricing" | `model: str` | `str` | `create_charge` |
+| `_validate_tier_boundaries(tiers)` | Check tier gaps/overlaps | `tiers: List[dict]` | `List[str]` | `create_charge` |
+| `_normalize_tiers(tiers, model)` | Convert tier input to API format | `tiers: List`, `model: str` | `List[dict]` | `create_charge` |
+| `_infer_charge_model_conservative(...)` | Conservative charge model inference | Various | `Tuple[str, str]` | `create_charge` |
+| `_normalize_uom(uom, available_uoms)` | Normalize UOM to valid tenant value | `uom: str`, `available_uoms: List[str]` | `Tuple[str, bool]` | `create_charge` |
+| `_get_charge_model_inference_reason(...)` | Human-readable inference explanation | Various | `str` | `create_charge` |
 
-#### Utility Tools
+#### Utility Tools (2 tools)
 
-| Tool | Line | Purpose | Parameters | Returns | API Calls |
-|------|------|---------|------------|---------|-----------|
-| `get_current_date()` | ~224 | Get today's date in YYYY-MM-DD | None | `str` | None |
-| `get_zuora_environment_info()` | ~231 | Get tenant settings summary | None | `str` | `check_connection()` |
+| Tool | Purpose | Parameters | Returns | API Calls |
+|------|---------|------------|---------|-----------|
+| `get_current_date()` | Get today's date in YYYY-MM-DD | None | `str` | None |
+| `get_zuora_environment_info()` | Get tenant settings summary | None | `str` | `check_connection()` |
 
-#### Connection Tools
+#### Connection Tools (1 tool)
 
-| Tool | Line | Purpose | Parameters | Returns | API Calls |
-|------|------|---------|------------|---------|-----------|
-| `connect_to_zuora()` | ~706 | Verify OAuth connection | None | `str` | `check_connection()` |
+| Tool | Purpose | Parameters | Returns | API Calls |
+|------|---------|------------|---------|-----------|
+| `connect_to_zuora()` | Verify OAuth connection | None | `str` | `check_connection()` |
 
-#### Query Tools
+#### Query Tools (3 tools)
 
-| Tool | Line | Purpose | Parameters | Returns | API Calls |
-|------|------|---------|------------|---------|-----------|
-| `list_zuora_products()` | ~718 | List last 20 products | None | `str` | `list_all_products()` |
-| `get_zuora_product(identifier, identifier_type)` | ~841 | Get product by ID/name/SKU | `identifier: str`, `identifier_type: Literal["id","name","sku"]` | `str` | `get_product()`, `list_all_products()` |
-| `get_zuora_rate_plan_details(product_id, rate_plan_name)` | ~924 | Get rate plan and charge details | `product_id: str`, `rate_plan_name: Optional[str]` | `str` | `get_product()` |
+| Tool | Purpose | Parameters | Returns | API Calls |
+|------|---------|------------|---------|-----------|
+| `list_zuora_products()` | List last 20 products | None | `str` | `list_all_products()` |
+| `get_zuora_product(identifier, identifier_type)` | Get product by ID/name/SKU | `identifier: str`, `identifier_type: Literal["id","name","sku"]` | `str` | `get_product()`, `list_all_products()` |
+| `get_zuora_rate_plan_details(product_id, rate_plan_name)` | Get rate plan and charge details | `product_id: str`, `rate_plan_name: Optional[str]` | `str` | `get_product()` |
 
-#### Payload Management Tools
+#### Payload Management Tools (4 tools)
 
-| Tool | Line | Purpose | Parameters | Returns | State Access |
-|------|------|---------|------------|---------|--------------|
-| `get_payloads(api_type)` | ~262 | Retrieve stored payloads | `api_type: Optional[str]` | `str` | Read |
-| `update_payload(api_type, field_path, new_value, payload_id, payload_name, payload_index)` | ~320 | Update field in existing payload | Various | `str` | Read/Write |
-| `create_payload(api_type, payload_data, defaults_applied)` | ~553 | Create new payload with validation | `api_type: str`, `payload_data: dict`, `defaults_applied: List` | `str` | Read/Write |
-| `list_payload_structure(api_type, payload_index)` | ~657 | Show payload field structure | `api_type: str`, `payload_index: int` | `str` | Read |
+| Tool | Purpose | Parameters | Returns | State Access |
+|------|---------|------------|---------|--------------|
+| `get_payloads(api_type)` | Retrieve stored payloads | `api_type: Optional[str]` | `str` | Read |
+| `update_payload(api_type, field_path, new_value, ...)` | Update field in existing payload | `api_type`, `field_path`, `new_value`, `payload_id`, `payload_name`, `payload_index` | `str` | Read/Write |
+| `create_payload(api_type, payload_data, defaults_applied)` | Create new payload with validation | `api_type: str`, `payload_data: dict`, `defaults_applied: List` | `str` | Read/Write |
+| `list_payload_structure(api_type, payload_index)` | Show payload field structure | `api_type: str`, `payload_index: int` | `str` | Read |
 
-#### Creation Tools (ProductManager)
+#### Creation Tools (ProductManager) (3 tools)
 
-| Tool | Line | Purpose | Key Parameters | Returns | State Access |
-|------|------|---------|----------------|---------|--------------|
-| `create_product(name, sku, effective_start_date, description, effective_end_date)` | ~1101 | Generate product creation payload | `name: str`, `sku: Optional[str]` | `str` | Read/Write |
-| `create_rate_plan(product_id, product_index, name, description, effective_start_date, effective_end_date)` | ~1216 | Generate rate plan creation payload | `product_id: Optional[str]`, `product_index: Optional[int]` | `str` | Read/Write |
-| `create_charge(rate_plan_id, rate_plan_index, name, charge_type, charge_model, price, tiers, ...)` | ~1654 | Generate charge creation payload | Many (see source) | `str` | Read/Write |
+| Tool | Purpose | Key Parameters | Returns | State Access |
+|------|---------|----------------|---------|--------------|
+| `create_product(name, sku, ...)` | Generate product creation payload | `name: str`, `sku: Optional[str]`, `effective_start_date`, `description`, `effective_end_date` | `str` | Read/Write |
+| `create_rate_plan(product_id, name, ...)` | Generate rate plan creation payload | `product_id: Optional[str]`, `product_index: Optional[int]`, `name`, `description`, `effective_start_date`, `effective_end_date` | `str` | Read/Write |
+| `create_charge(rate_plan_id, name, ...)` | Generate charge creation payload | `rate_plan_id`, `rate_plan_index`, `name`, `charge_type`, `charge_model`, `price`, `tiers`, and many more | `str` | Read/Write |
 
-#### Update Tools (ProductManager)
+#### Update Tools (ProductManager) (3 tools)
 
-| Tool | Line | Purpose | Parameters | Returns | State Access |
-|------|------|---------|------------|---------|--------------|
-| `update_zuora_product(product_id, attribute, new_value)` | ~981 | Generate product update payload | `product_id: str`, `attribute: Literal[...]`, `new_value: str` | `str` | Read/Write |
-| `update_zuora_rate_plan(rate_plan_id, attribute, new_value)` | ~1018 | Generate rate plan update payload | `rate_plan_id: str`, `attribute: Literal[...]`, `new_value: str` | `str` | Read/Write |
-| `update_zuora_charge(charge_id, attribute, new_value)` | ~1055 | Generate charge update payload | `charge_id: str`, `attribute: str`, `new_value: Any` | `str` | Read/Write |
+| Tool | Purpose | Parameters | Returns | State Access |
+|------|---------|------------|---------|--------------|
+| `update_zuora_product(product_id, attribute, new_value)` | Generate product update payload | `product_id: str`, `attribute: Literal["Name","SKU","Description","EffectiveStartDate","EffectiveEndDate"]`, `new_value: str` | `str` | Read/Write |
+| `update_zuora_rate_plan(rate_plan_id, attribute, new_value)` | Generate rate plan update payload | `rate_plan_id: str`, `attribute: Literal["Name","Description","EffectiveStartDate","EffectiveEndDate"]`, `new_value: str` | `str` | Read/Write |
+| `update_zuora_charge(charge_id, attribute, new_value)` | Generate charge update payload | `charge_id: str`, `attribute: str`, `new_value: Any` | `str` | Read/Write |
 
-#### Advisory Tools (BillingArchitect)
+#### Expire Tools (ProductManager) (1 tool)
 
-| Tool | Line | Purpose | Key Parameters | Returns |
-|------|------|---------|----------------|---------|
-| `generate_prepaid_config(product_name, rate_plan_name, prepaid_uom, prepaid_amount, prepaid_quantity, ...)` | ~2137 | Generate Prepaid with Drawdown config | Many | `str` |
-| `generate_workflow_config(workflow_name, trigger_type, description, schedule, event_type)` | ~2371 | Generate Zuora Workflow config | `workflow_name: str`, `trigger_type: Literal[...]` | `str` |
-| `generate_notification_rule(rule_name, event_type, description, channel_type, endpoint_url)` | ~2578 | Generate notification rule config | `rule_name: str`, `event_type: str` | `str` |
-| `generate_order_payload(action_type, subscription_number, add_rate_plan_id, ...)` | ~2737 | Generate Orders API payload | `action_type: Literal[...]` | `str` |
-| `explain_field_lookup(object_type, field_name, use_case)` | ~3014 | Explain fieldLookup() function | `object_type: Literal[...]`, `field_name: str` | `str` |
-| `generate_multi_attribute_pricing(charge_name, attributes, base_price)` | ~3232 | Generate MAP configuration | `charge_name: str`, `attributes: List` | `str` |
-| `generate_custom_field_definition(field_name, field_label, field_type, object_type, ...)` | ~3449 | Generate custom field definition | `field_name: str`, `field_type: Literal[...]` | `str` |
-| `validate_billing_configuration(config_type)` | ~3610 | Validate advisory payloads in session | `config_type: Literal[...]` | `str` |
-| `get_zuora_documentation(topic)` | ~3760 | Get Zuora documentation links | `topic: Literal[...]` | `str` |
+| Tool | Purpose | Parameters | Returns | State Access |
+|------|---------|------------|---------|--------------|
+| `expire_product(product_id, new_end_date, expire_rate_plans)` | Expire product with cascade to rate plans | `product_id: str`, `new_end_date: str` (YYYY-MM-DD), `expire_rate_plans: bool = True` | `str` | Read/Write |
+
+**expire_product Details:**
+- Fetches product details from Zuora API to verify existence
+- Validates `new_end_date` is after product start date
+- Generates update payload for the product (`product_update`)
+- If `expire_rate_plans=True`, generates update payloads for all rate plans whose end date is after the new product end date (`rate_plan_update`)
+- Warns if new end date is in the past (backdated expiration)
+- Shows summary table of affected rate plans
+
+#### Advisory Tools (BillingArchitect) (9 tools)
+
+| Tool | Purpose | Key Parameters | Returns |
+|------|---------|----------------|---------|
+| `generate_prepaid_config(...)` | Generate Prepaid with Drawdown config | `product_name`, `rate_plan_name`, `prepaid_uom`, `prepaid_amount`, `prepaid_quantity`, and more | `str` |
+| `generate_workflow_config(...)` | Generate Zuora Workflow config | `workflow_name: str`, `trigger_type: Literal["Scheduled","Ondemand","Callout"]`, `description`, `schedule`, `event_type` | `str` |
+| `generate_notification_rule(...)` | Generate notification rule config | `rule_name: str`, `event_type: str`, `description`, `channel_type`, `endpoint_url` | `str` |
+| `generate_order_payload(...)` | Generate Orders API payload | `action_type: Literal["AddProduct","RemoveProduct","UpdateProduct","Suspend","Resume"]`, `subscription_number`, `add_rate_plan_id` | `str` |
+| `explain_field_lookup(...)` | Explain fieldLookup() function for dynamic pricing | `object_type: Literal["Account","Subscription","RatePlanCharge",...]`, `field_name: str`, `use_case` | `str` |
+| `generate_multi_attribute_pricing(...)` | Generate MAP configuration | `charge_name: str`, `attributes: List`, `base_price` | `str` |
+| `generate_custom_field_definition(...)` | Generate custom field definition | `field_name: str`, `field_label`, `field_type: Literal["Text","Number","Date","Picklist",...]`, `object_type` | `str` |
+| `validate_billing_configuration(...)` | Validate advisory payloads in session | `config_type: Literal["prepaid","workflow","notification","order","custom_field","map"]` | `str` |
+| `get_zuora_documentation(topic)` | Get Zuora documentation links | `topic: Literal["prepaid","workflows","notifications","orders","custom_fields","map","pricing",...]` | `str` |
 
 ---
 
@@ -446,7 +465,7 @@ OAuth 2.0 authenticated REST client for Zuora API operations.
 
 ---
 
-### 4.5 agents/models.py (Data Models) - ~520 lines
+### 4.5 agents/models.py (Data Models) - ~970 lines
 
 Pydantic models for API contracts and domain objects.
 
@@ -464,13 +483,15 @@ Pydantic models for API contracts and domain objects.
 
 | Type Alias | Values |
 |------------|--------|
-| `ZUORA_CHARGE_MODELS` | Flat Fee Pricing, Per Unit Pricing, Volume Pricing, Tiered Pricing, Overage Pricing, etc. |
+| `ZUORA_CHARGE_MODELS` | Flat Fee Pricing, Per Unit Pricing, Volume Pricing, Tiered Pricing, Overage Pricing, Tiered with Overage Pricing, Discount-Fixed Amount, Discount-Percentage, Delivery Pricing, MultiAttributePricing, PreratedPerUnit, PreratedPricing, HighWatermarkVolumePricing, HighWatermarkTieredPricing |
 | `ZUORA_CHARGE_TYPES` | OneTime, Recurring, Usage |
-| `ZUORA_BILLING_PERIODS` | Month, Quarter, Annual, Semi-Annual, Week, etc. |
-| `ZUORA_BILL_CYCLE_TYPES` | DefaultFromCustomer, SpecificDayofMonth, SubscriptionStartDay, etc. |
+| `ZUORA_BILLING_PERIODS` | Month, Quarter, Annual, Semi-Annual, Subscription Term, Week, Specific Months, Specific Weeks, Specific Days |
+| `ZUORA_BILL_CYCLE_TYPES` | DefaultFromCustomer, SpecificDayofMonth, SubscriptionStartDay, ChargeTriggerDay, SpecificDayofWeek, TermStartDay, TermEndDay |
 | `ZUORA_TRIGGER_EVENTS` | ContractEffective, ServiceActivation, CustomerAcceptance |
 | `ZUORA_BILLING_TIMING` | In Advance, In Arrears |
-| `ZUORA_RATING_GROUP` | ByBillingPeriod, ByUsageStartDate, ByUsageRecord, etc. |
+| `ZUORA_RATING_GROUP` | ByBillingPeriod, ByUsageStartDate, ByUsageRecord, ByUsageUpload, ByGroupId |
+| `ZUORA_PRODUCT_CATEGORY` | Base Products, Add On Services, Miscellaneous Products |
+| `ZUORA_BILLING_PERIOD_ALIGNMENT` | AlignToCharge, AlignToSubscriptionStart, AlignToTermStart |
 
 #### Chat API Models
 
@@ -794,27 +815,31 @@ OpenTelemetry integration for distributed tracing and metrics.
 ### 5.1 Tool Categories Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              TOOL CATEGORIES                                     │
-├─────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                  │
-│  ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────────────┐   │
-│  │   SHARED TOOLS    │  │  PM TOOLS (CRUD)  │  │   BA TOOLS (Advisory)     │   │
-│  │   (Both Personas) │  │  (ProductManager) │  │  (BillingArchitect)       │   │
-│  ├───────────────────┤  ├───────────────────┤  ├───────────────────────────┤   │
-│  │ get_current_date  │  │ create_product    │  │ generate_prepaid_config   │   │
-│  │ get_zuora_env_info│  │ create_rate_plan  │  │ generate_workflow_config  │   │
-│  │ connect_to_zuora  │  │ create_charge     │  │ generate_notification_rule│   │
-│  │ list_zuora_product│  │ update_zuora_*    │  │ generate_order_payload    │   │
-│  │ get_zuora_product │  │ update_payload    │  │ explain_field_lookup      │   │
-│  │ get_rate_plan_deta│  │ create_payload    │  │ generate_multi_attr_price │   │
-│  │ get_payloads      │  │                   │  │ generate_custom_field_def │   │
-│  │ list_payload_struc│  │                   │  │ validate_billing_config   │   │
-│  │                   │  │                   │  │ get_zuora_documentation   │   │
-│  └───────────────────┘  └───────────────────┘  └───────────────────────────┘   │
-│         8 tools               8 tools                    9 tools                │
-│                                                                                  │
-└─────────────────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────────────┐
+│                                    TOOL CATEGORIES                                    │
+│                                   Total: 26 Tools                                     │
+├───────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                       │
+│  ┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────────────────────┐    │
+│  │    SHARED TOOLS     │  │   PM TOOLS (CRUD)   │  │    BA TOOLS (Advisory)      │    │
+│  │   (Both Personas)   │  │  (ProductManager)   │  │    (BillingArchitect)       │    │
+│  ├─────────────────────┤  ├─────────────────────┤  ├─────────────────────────────┤    │
+│  │ get_current_date    │  │ create_product      │  │ generate_prepaid_config     │    │
+│  │ get_zuora_env_info  │  │ create_rate_plan    │  │ generate_workflow_config    │    │
+│  │ connect_to_zuora    │  │ create_charge       │  │ generate_notification_rule  │    │
+│  │ list_zuora_products │  │ update_zuora_product│  │ generate_order_payload      │    │
+│  │ get_zuora_product   │  │ update_zuora_rate_pl│  │ explain_field_lookup        │    │
+│  │ get_rate_plan_detail│  │ update_zuora_charge │  │ generate_multi_attr_pricing │    │
+│  │ get_payloads        │  │ expire_product ←NEW │  │ generate_custom_field_def   │    │
+│  │ list_payload_struct │  │ update_payload      │  │ validate_billing_config     │    │
+│  │                     │  │ create_payload      │  │ get_zuora_documentation     │    │
+│  └─────────────────────┘  └─────────────────────┘  └─────────────────────────────┘    │
+│          8 tools                  9 tools                     9 tools                 │
+│                                                                                       │
+├───────────────────────────────────────────────────────────────────────────────────────┤
+│  ProductManager: SHARED (8) + PM (9) = 17 tools                                       │
+│  BillingArchitect: SHARED (8) + BA (9) = 17 tools                                     │
+└───────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 5.2 Shared Tools (Read-Only)
@@ -832,9 +857,9 @@ Available to both ProductManager and BillingArchitect personas.
 | `get_payloads(api_type)` | Retrieve payloads from agent state | State |
 | `list_payload_structure(api_type, payload_index)` | Show payload field structure | State |
 
-### 5.3 ProductManager Tools (CRUD)
+### 5.3 ProductManager Tools (CRUD + Expire)
 
-Execute Zuora API operations (create/update products, rate plans, charges).
+Execute Zuora API operations (create/update/expire products, rate plans, charges).
 
 | Tool | Purpose | Generates |
 |------|---------|-----------|
@@ -844,6 +869,7 @@ Execute Zuora API operations (create/update products, rate plans, charges).
 | `update_zuora_product(product_id, attribute, new_value)` | Generate product update payload | `product_update` payload |
 | `update_zuora_rate_plan(rate_plan_id, attribute, new_value)` | Generate rate plan update payload | `rate_plan_update` payload |
 | `update_zuora_charge(charge_id, attribute, new_value)` | Generate charge update payload | `charge_update` payload |
+| `expire_product(product_id, new_end_date, expire_rate_plans)` | Expire product with cascade to rate plans | `product_update` + `rate_plan_update` payloads |
 | `update_payload(api_type, field_path, new_value, ...)` | Update field in existing payload | Modified payload |
 | `create_payload(api_type, payload_data, defaults_applied)` | Create new payload with validation | New payload |
 
@@ -869,7 +895,7 @@ Advisory-only mode for complex configurations.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                           MODULE DEPENDENCY GRAPH                                │
+│                           MODULE DEPENDENCY GRAPH                               │
 └─────────────────────────────────────────────────────────────────────────────────┘
 
 agentcore_app.py
@@ -1104,7 +1130,7 @@ The agent generates payloads **immediately** even with incomplete information.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                           PLACEHOLDER FLOW                                       │
+│                           PLACEHOLDER FLOW                                      │
 └─────────────────────────────────────────────────────────────────────────────────┘
 
 User: "Create a product called Analytics Pro"
@@ -1177,7 +1203,7 @@ Batch creation uses `@{Object[index].Id}` syntax for entity relationships.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                         OBJECT REFERENCE SYSTEM                                  │
+│                         OBJECT REFERENCE SYSTEM                                 │
 └─────────────────────────────────────────────────────────────────────────────────┘
 
 Batch Create Example:
@@ -1227,7 +1253,7 @@ Limits conversation history for performance optimization.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                          SESSION ROTATION                                        │
+│                          SESSION ROTATION                                       │
 └─────────────────────────────────────────────────────────────────────────────────┘
 
 MAX_CONVERSATION_TURNS = 3
@@ -1261,7 +1287,7 @@ Charge model inferred only when context is unambiguous.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                    CHARGE MODEL INFERENCE RULES                                  │
+│                    CHARGE MODEL INFERENCE RULES                                 │
 └─────────────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────┐     ┌─────────────────────────────────┐
@@ -1275,6 +1301,123 @@ Charge model inferred only when context is unambiguous.
 └─────────────────────────────────┘     └─────────────────────────────────┘
 
 Principle: When in doubt, use a placeholder rather than guess wrong.
+```
+
+### 9.6 Expire Product Workflow
+
+The agent follows a structured workflow for expiring (end-dating) products.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                         EXPIRE PRODUCT WORKFLOW                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+User: "Expire my Analytics Pro product"
+                │
+                ▼
+┌─────────────────────────────────────────┐
+│ Step 1: IDENTIFY                        │
+│ Agent asks: "How would you like to      │
+│ identify the product — by Product Name, │
+│ Product ID, or SKU?"                    │
+│                                         │
+│ → get_zuora_product(identifier)         │
+│ → Display: Name, ID, SKU, Start/End     │
+│   dates, list of Rate Plans             │
+└─────────────────────────────────────────┘
+                │
+                ▼
+┌─────────────────────────────────────────┐
+│ Step 2: CONFIRM                         │
+│ Agent asks: "Is this the product you    │
+│ want to expire?"                        │
+│                                         │
+│ Shows product details for verification  │
+└─────────────────────────────────────────┘
+                │
+                ▼
+┌─────────────────────────────────────────┐
+│ Step 3: CHOOSE EXPIRATION METHOD        │
+│ Agent asks: "How would you like to      │
+│ expire this product?"                   │
+│                                         │
+│ Options:                                │
+│ 1. Expire immediately (today's date)   │
+│ 2. Set a specific end date              │
+│ 3. Schedule future expiration           │
+│                                         │
+│ → get_current_date() if immediate       │
+│ → User provides date (YYYY-MM-DD)       │
+└─────────────────────────────────────────┘
+                │
+                ▼
+┌─────────────────────────────────────────┐
+│ Step 4: GENERATE PAYLOADS               │
+│ → expire_product(product_id,            │
+│                  new_end_date,          │
+│                  expire_rate_plans=True)│
+│                                         │
+│ Generates:                              │
+│ • product_update payload (1)            │
+│ • rate_plan_update payloads (N)         │
+│   for all rate plans with end dates     │
+│   after the new product end date        │
+└─────────────────────────────────────────┘
+                │
+                ▼
+┌─────────────────────────────────────────┐
+│ Step 5: REVIEW AND SEND                 │
+│ Agent displays summary:                 │
+│ • Product name and new end date         │
+│ • Rate plans that will be expired       │
+│ • Rate plans skipped (already expired)  │
+│                                         │
+│ User reviews payloads on the right      │
+│ and clicks "Send to Zuora"              │
+└─────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              EXPIRE PRODUCT DETAILS                             │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  expire_product(product_id, new_end_date, expire_rate_plans=True)               │
+│                                                                                 │
+│  Validations:                                                                   │
+│  • new_end_date must be YYYY-MM-DD format                                       │
+│  • new_end_date must be >= product's EffectiveStartDate                         │
+│  • Warns (but allows) if new_end_date is in the past (backdated expiration)     │
+│  • Checks if product is already expired (returns early if so)                   │
+│                                                                                 │
+│  Generated Payloads:                                                            │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │ product_update:                                                         │    │
+│  │ {                                                                       │    │
+│  │   "method": "PUT",                                                      │    │
+│  │   "endpoint": "/v1/object/product/{product_id}",                        │    │
+│  │   "body": { "EffectiveEndDate": "2024-12-31" }                          │    │
+│  │ }                                                                       │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                 │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │ rate_plan_update (for each affected rate plan):                         │    │
+│  │ {                                                                       │    │
+│  │   "method": "PUT",                                                      │    │
+│  │   "endpoint": "/v1/object/product-rate-plan/{rate_plan_id}",            │    │
+│  │   "body": { "EffectiveEndDate": "2024-12-31" }                          │    │
+│  │ }                                                                       │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                 │
+│  Rate Plan Cascade Logic:                                                       │
+│  • Only rate plans with EffectiveEndDate > new product end date are updated     │
+│  • Rate plans already expiring on or before the new date are skipped            │
+│  • If expire_rate_plans=False, only the product is updated                      │
+│                                                                                 │
+│  Important Notes:                                                               │
+│  • Existing subscriptions are NOT affected by product/rate plan expiration      │
+│  • Expiring a product prevents new subscriptions from using it                  │
+│  • Charges are NOT individually expired (they follow the rate plan lifecycle)   │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -1382,4 +1525,19 @@ Measures:
 ---
 
 *Generated: December 2024*
-*Version: 2.0*
+*Version: 3.0*
+
+### Changelog
+
+**Version 3.0** (December 2024)
+- Added `expire_product` tool for expiring products with cascade to rate plans
+- Updated tool count from 30+ to accurate 26 tools
+- Updated line counts for all modules to reflect current codebase
+- Added Section 9.6: Expire Product Workflow design pattern
+- Updated Tool Categories diagram with new tool and accurate counts
+- Added `ZUORA_PRODUCT_CATEGORY` and `ZUORA_BILLING_PERIOD_ALIGNMENT` enum types
+- Removed line numbers from tool reference tables for maintainability
+- Updated PROJECT_MANAGER_TOOLS list to include `expire_product`
+
+**Version 2.0** (December 2024)
+- Initial comprehensive architecture documentation

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any, Literal, Union
+from typing import List, Optional, Dict, Any, Literal
 from enum import Enum
 
 
@@ -20,7 +20,9 @@ class Tier(BaseModel):
     )
 
 
-# Zuora v1 API ChargeModel enum values (exact strings from API)
+# ============ Zuora v1 API Enum Types ============
+
+# ChargeModel enum values (exact strings from API)
 ZUORA_CHARGE_MODELS = Literal[
     "Flat Fee Pricing",
     "Per Unit Pricing",
@@ -38,10 +40,10 @@ ZUORA_CHARGE_MODELS = Literal[
     "HighWatermarkTieredPricing",
 ]
 
-# Zuora v1 API ChargeType enum values
+# ChargeType enum values
 ZUORA_CHARGE_TYPES = Literal["OneTime", "Recurring", "Usage"]
 
-# Zuora v1 API BillingPeriod enum values
+# BillingPeriod enum values
 ZUORA_BILLING_PERIODS = Literal[
     "Month",
     "Quarter",
@@ -54,7 +56,7 @@ ZUORA_BILLING_PERIODS = Literal[
     "Specific Days",
 ]
 
-# Zuora v1 API BillCycleType enum values
+# BillCycleType enum values
 ZUORA_BILL_CYCLE_TYPES = Literal[
     "DefaultFromCustomer",
     "SpecificDayofMonth",
@@ -65,101 +67,469 @@ ZUORA_BILL_CYCLE_TYPES = Literal[
     "TermEndDay",
 ]
 
-# Zuora v1 API TriggerEvent enum values
+# TriggerEvent enum values
 ZUORA_TRIGGER_EVENTS = Literal[
     "ContractEffective",
     "ServiceActivation",
     "CustomerAcceptance",
 ]
 
-# Zuora v1 API BillingTiming enum values
+# BillingTiming enum values
 ZUORA_BILLING_TIMING = Literal["In Advance", "In Arrears"]
 
-# Zuora v1 API RatingGroup enum values
-# Specifies how usage records are aggregated for rating in tiered/volume pricing
+# RatingGroup enum values
 ZUORA_RATING_GROUP = Literal[
-    "ByBillingPeriod",  # Rating based on all usages in a billing period (default)
-    "ByUsageStartDate",  # Rating based on all usages on the same usage start date
-    "ByUsageRecord",  # Rating based on each individual usage record
-    "ByUsageUpload",  # Rating based on all usages in an uploaded file
-    "ByGroupId",  # Rating based on custom group (requires Active Rating feature)
+    "ByBillingPeriod",
+    "ByUsageStartDate",
+    "ByUsageRecord",
+    "ByUsageUpload",
+    "ByGroupId",
 ]
+
+# Product Category enum values
+ZUORA_PRODUCT_CATEGORY = Literal[
+    "Base Products",
+    "Add On Services",
+    "Miscellaneous Products",
+]
+
+# BillingPeriodAlignment enum values
+ZUORA_BILLING_PERIOD_ALIGNMENT = Literal[
+    "AlignToCharge",
+    "AlignToSubscriptionStart",
+    "AlignToTermStart",
+    "AlignToTermEnd",
+]
+
+# EndDateCondition enum values
+ZUORA_END_DATE_CONDITION = Literal["SubscriptionEnd", "FixedPeriod"]
+
+# ListPriceBase enum values
+ZUORA_LIST_PRICE_BASE = Literal[
+    "Per Billing Period",
+    "Per Month",
+    "Per Week",
+    "Per Year",
+    "Per Specific Months",
+]
+
+# PriceChangeOption enum values
+ZUORA_PRICE_CHANGE_OPTION = Literal[
+    "NoChange",
+    "SpecificPercentageValue",
+    "UseLatestProductCatalogPricing",
+]
+
+# PriceIncreaseOption enum values
+ZUORA_PRICE_INCREASE_OPTION = Literal[
+    "FromTenantPercentageValue",
+    "SpecificPercentageValue",
+]
+
+# DiscountLevel enum values
+ZUORA_DISCOUNT_LEVEL = Literal["rateplan", "subscription", "account"]
+
+# ApplyDiscountTo enum values
+ZUORA_APPLY_DISCOUNT_TO = Literal[
+    "ONETIME",
+    "RECURRING",
+    "USAGE",
+    "ONETIMERECURRING",
+    "ONETIMEUSAGE",
+    "RECURRINGUSAGE",
+    "ONETIMERECURRINGUSAGE",
+]
+
+# UpToPeriodsType enum values
+ZUORA_UP_TO_PERIODS_TYPE = Literal[
+    "Billing Periods",
+    "Days",
+    "Weeks",
+    "Months",
+    "Years",
+]
+
+# ChargeFunction enum values (Prepaid with Drawdown)
+ZUORA_CHARGE_FUNCTION = Literal[
+    "Standard",
+    "Prepayment",
+    "CommitmentTrueUp",
+    "Drawdown",
+    "CreditCommitment",
+    "DrawdownAndCreditCommitment",
+]
+
+# CommitmentType enum values
+ZUORA_COMMITMENT_TYPE = Literal["UNIT", "CURRENCY"]
+
+# CreditOption enum values
+ZUORA_CREDIT_OPTION = Literal["TimeBased", "ConsumptionBased", "FullCreditBack"]
+
+# ValidityPeriodType enum values
+ZUORA_VALIDITY_PERIOD_TYPE = Literal[
+    "SUBSCRIPTION_TERM",
+    "ANNUAL",
+    "SEMI_ANNUAL",
+    "QUARTER",
+    "MONTH",
+]
+
+# RolloverApply enum values
+ZUORA_ROLLOVER_APPLY = Literal["ApplyFirst", "ApplyLast"]
+
+# PrepaidOperationType enum values
+ZUORA_PREPAID_OPERATION_TYPE = Literal["topup", "drawdown"]
+
+# ProrationOption enum values
+ZUORA_PRORATION_OPTION = Literal[
+    "NoProration",
+    "TimeBasedProration",
+    "DefaultFromTenantSetting",
+    "ChargeFullPeriod",
+]
+
+# WeeklyBillCycleDay enum values
+ZUORA_WEEKLY_BILL_CYCLE_DAY = Literal[
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+]
+
+# OverageCalculationOption enum values
+ZUORA_OVERAGE_CALCULATION_OPTION = Literal["EndOfSmoothingPeriod", "PerBillingPeriod"]
+
+# OverageUnusedUnitsCreditOption enum values
+ZUORA_OVERAGE_UNUSED_UNITS_CREDIT_OPTION = Literal["NoCredit", "CreditBySpecificRate"]
+
+# SmoothingModel enum values
+ZUORA_SMOOTHING_MODEL = Literal["RollingWindow", "Rollover"]
+
+# UsageRecordRatingOption enum values
+ZUORA_USAGE_RECORD_RATING_OPTION = Literal["EndOfBillingPeriod", "OnDemand"]
+
+# RevenueRecognitionRuleName enum values
+ZUORA_REVENUE_RECOGNITION_RULE_NAME = Literal[
+    "Recognize upon invoicing",
+    "Recognize daily over time",
+]
+
+# RevRecTriggerCondition enum values
+ZUORA_REV_REC_TRIGGER_CONDITION = Literal[
+    "ContractEffectiveDate",
+    "ServiceActivationDate",
+    "CustomerAcceptanceDate",
+]
+
+# TaxMode enum values
+ZUORA_TAX_MODE = Literal["TaxExclusive", "TaxInclusive"]
+
+
+# ============ Product Catalog Models ============
 
 
 class Charge(BaseModel):
-    """Product Rate Plan Charge model matching Zuora v1 API schema."""
+    """Product Rate Plan Charge model matching Zuora v1 API schema.
 
-    name: str
-    type: ZUORA_CHARGE_TYPES = Field(
-        ..., alias="chargeType", description="Charge type: OneTime, Recurring, or Usage"
+    See: https://developer.zuora.com/v1-api-reference/api/operation/Object_POSTProductRatePlanCharge/
+    """
+
+    # ============ Core Required Fields ============
+    name: str = Field(..., description="Charge name (max 100 chars)")
+    chargeType: ZUORA_CHARGE_TYPES = Field(
+        ..., alias="type", description="Charge type: 'OneTime', 'Recurring', or 'Usage'"
     )
-    model: ZUORA_CHARGE_MODELS = Field(
-        ..., alias="chargeModel", description="Pricing model per Zuora API"
-    )
-    billingPeriod: Optional[ZUORA_BILLING_PERIODS] = Field(
-        None, description="Billing period for recurring charges"
-    )
-    billingTiming: Optional[ZUORA_BILLING_TIMING] = Field(
-        "In Advance", description="Bill in advance or arrears"
+    chargeModel: ZUORA_CHARGE_MODELS = Field(
+        ..., alias="model", description="Pricing model per Zuora API"
     )
     billCycleType: ZUORA_BILL_CYCLE_TYPES = Field(
         "DefaultFromCustomer", description="How to determine billing day"
     )
+    billingPeriod: Optional[ZUORA_BILLING_PERIODS] = Field(
+        None, description="Billing period for recurring charges"
+    )
     triggerEvent: ZUORA_TRIGGER_EVENTS = Field(
         "ContractEffective", description="When to start billing"
     )
-    uom: Optional[str] = Field(
-        None, description="Unit of measure for usage/per-unit charges"
-    )
+
+    # ============ Pricing Fields ============
     price: Optional[float] = Field(
         None, description="Price for flat fee or per unit models"
     )
     currency: str = Field("USD", description="Currency code")
-    includedUnits: Optional[float] = Field(
+    defaultQuantity: Optional[float] = Field(
         None,
-        description="Units included before overage pricing kicks in (for Overage/Tiered with Overage)",
+        description="Default quantity of units. Required for Per Unit/Volume/Tiered Pricing.",
     )
-    overagePrice: Optional[float] = Field(
-        None,
-        description="Price per unit after included units are consumed (for Overage/Tiered with Overage)",
+    minQuantity: Optional[float] = Field(
+        None, description="Minimum units allowed (max 16 chars)"
+    )
+    maxQuantity: Optional[float] = Field(
+        None, description="Maximum units allowed (max 16 chars)"
+    )
+    includedUnits: Optional[float] = Field(
+        None, description="Units included before overage pricing (for Overage models)"
     )
     tiers: Optional[List[Tier]] = Field(
         None, description="Pricing tiers for tiered/volume models"
     )
-    defaultQuantity: Optional[float] = Field(
-        None, description="Default quantity of units"
+
+    # ============ Billing Configuration ============
+    billingTiming: Optional[ZUORA_BILLING_TIMING] = Field(
+        "In Advance", description="'In Advance' or 'In Arrears'. Not for Usage charges."
     )
-    # Price increase on renewal fields
-    priceIncreaseOption: Optional[
-        Literal["FromTenantPercentageValue", "SpecificPercentageValue"]
-    ] = Field(
+    billingPeriodAlignment: Optional[ZUORA_BILLING_PERIOD_ALIGNMENT] = Field(
         None,
-        description="Price increase option on renewal: 'FromTenantPercentageValue' (use tenant setting) or 'SpecificPercentageValue' (use priceIncreasePercentage)",
+        description="Align charges within subscription: 'AlignToCharge', 'AlignToSubscriptionStart', 'AlignToTermStart', 'AlignToTermEnd'",
+    )
+    billCycleDay: Optional[int] = Field(
+        None, description="Bill cycle day (1-31). Account BCD can override."
+    )
+    weeklyBillCycleDay: Optional[ZUORA_WEEKLY_BILL_CYCLE_DAY] = Field(
+        None,
+        description="Weekly bill cycle day. Required when BillCycleType='SpecificDayofWeek'",
+    )
+    specificBillingPeriod: Optional[int] = Field(
+        None,
+        description="Custom months/weeks when BillingPeriod='Specific Months/Weeks'",
+    )
+    listPriceBase: Optional[ZUORA_LIST_PRICE_BASE] = Field(
+        None, description="List price base. Defaults to BillingPeriod if not set."
+    )
+    specificListPriceBase: Optional[int] = Field(
+        None,
+        description="Months for list price base (1-120). Required when ListPriceBase='Per Specific Months'",
+    )
+
+    # ============ Charge Duration ============
+    endDateCondition: Optional[ZUORA_END_DATE_CONDITION] = Field(
+        "SubscriptionEnd", description="'SubscriptionEnd' or 'FixedPeriod'"
+    )
+    upToPeriods: Optional[int] = Field(
+        None,
+        description="Charge duration (0-65535). Required when EndDateCondition='FixedPeriod'",
+    )
+    upToPeriodsType: Optional[ZUORA_UP_TO_PERIODS_TYPE] = Field(
+        "Billing Periods", description="Period type for upToPeriods"
+    )
+
+    # ============ Price Change on Renewal ============
+    priceChangeOption: Optional[ZUORA_PRICE_CHANGE_OPTION] = Field(
+        "NoChange",
+        description="Automatic price change on renewal: 'NoChange', 'SpecificPercentageValue', 'UseLatestProductCatalogPricing'",
+    )
+    priceIncreaseOption: Optional[ZUORA_PRICE_INCREASE_OPTION] = Field(
+        None,
+        description="Price increase on renewal: 'FromTenantPercentageValue' or 'SpecificPercentageValue'",
     )
     priceIncreasePercentage: Optional[float] = Field(
-        None,
-        description="Percentage to increase/decrease price on renewal (-100 to 100). Required when priceIncreaseOption='SpecificPercentageValue'",
+        None, description="Percentage increase/decrease on renewal (-100 to 100)"
     )
     useTenantDefaultForPriceChange: Optional[bool] = Field(
         None,
-        description="When true, uses tenant-level percentage uplift for automatic price change. Set to false when using specific percentage.",
+        description="Use tenant-level percentage uplift. Set false when using specific percentage.",
     )
-    # PWD (Prepaid with Drawdown) specific fields
+
+    # ============ Usage Charge Fields ============
+    uom: Optional[str] = Field(
+        None,
+        description="Unit of measure (max 25 chars). Required for Per Unit/Volume/Overage/Tiered models.",
+    )
+    ratingGroup: Optional[ZUORA_RATING_GROUP] = Field(
+        None, description="How to aggregate usage for rating"
+    )
+    usageRecordRatingOption: Optional[ZUORA_USAGE_RECORD_RATING_OPTION] = Field(
+        "EndOfBillingPeriod",
+        description="When to rate usage records: 'EndOfBillingPeriod' or 'OnDemand'",
+    )
+
+    # ============ Overage Fields ============
+    overagePrice: Optional[float] = Field(
+        None, description="Price per unit after included units consumed"
+    )
+    overageCalculationOption: Optional[ZUORA_OVERAGE_CALCULATION_OPTION] = Field(
+        None,
+        description="When to calculate overage: 'EndOfSmoothingPeriod' or 'PerBillingPeriod'",
+    )
+    overageUnusedUnitsCreditOption: Optional[
+        ZUORA_OVERAGE_UNUSED_UNITS_CREDIT_OPTION
+    ] = Field(
+        None, description="Credit unused units: 'NoCredit' or 'CreditBySpecificRate'"
+    )
+    numberOfPeriod: Optional[int] = Field(
+        None, description="Periods for overage smoothing (positive integer)"
+    )
+    smoothingModel: Optional[ZUORA_SMOOTHING_MODEL] = Field(
+        None, description="Overage smoothing model: 'RollingWindow' or 'Rollover'"
+    )
+
+    # ============ Discount Fields ============
+    applyDiscountTo: Optional[ZUORA_APPLY_DISCOUNT_TO] = Field(
+        None, description="Charge types discount applies to (for discount models)"
+    )
+    discountLevel: Optional[ZUORA_DISCOUNT_LEVEL] = Field(
+        None, description="Discount scope: 'rateplan', 'subscription', or 'account'"
+    )
+    isStackedDiscount: Optional[bool] = Field(
+        None, description="Calculate as stacked discount (Discount-Percentage only)"
+    )
+    applyToBillingPeriodPartially: Optional[bool] = Field(
+        None,
+        description="Allow discount duration aligned with billing period partially",
+    )
+    reflectDiscountInNetAmount: Optional[bool] = Field(
+        False, description="Reflect discount in net amount for Zuora Revenue"
+    )
+    useDiscountSpecificAccountingCode: Optional[bool] = Field(
+        None, description="Use specific accounting code for discount charge"
+    )
+
+    # ============ Accounting Fields ============
+    accountingCode: Optional[str] = Field(
+        None, description="Accounting code (max 100 chars)"
+    )
+    deferredRevenueAccount: Optional[str] = Field(
+        None, description="Deferred revenue account name (max 100 chars)"
+    )
+    recognizedRevenueAccount: Optional[str] = Field(
+        None, description="Recognized revenue account name (max 100 chars)"
+    )
+
+    # ============ Revenue Recognition Fields ============
+    revenueRecognitionRuleName: Optional[ZUORA_REVENUE_RECOGNITION_RULE_NAME] = Field(
+        None, description="'Recognize upon invoicing' or 'Recognize daily over time'"
+    )
+    revRecCode: Optional[str] = Field(
+        None, description="Revenue recognition code (max 70 chars)"
+    )
+    revRecTriggerCondition: Optional[ZUORA_REV_REC_TRIGGER_CONDITION] = Field(
+        None, description="When revenue recognition begins"
+    )
+    excludeItemBillingFromRevenueAccounting: Optional[bool] = Field(
+        False,
+        description="Exclude billing items from revenue accounting (Order to Revenue)",
+    )
+    excludeItemBookingFromRevenueAccounting: Optional[bool] = Field(
+        False,
+        description="Exclude booking items from revenue accounting (Order to Revenue)",
+    )
+    isAllocationEligible: Optional[bool] = Field(
+        False,
+        description="Allocation eligible for revenue recognition (Order to Revenue)",
+    )
+    isUnbilled: Optional[bool] = Field(
+        False, description="Unbilled accounting (Order to Revenue)"
+    )
+    legacyRevenueReporting: Optional[bool] = Field(
+        None, description="Legacy revenue reporting"
+    )
+    revenueRecognitionTiming: Optional[str] = Field(
+        None, description="Revenue recognition timing (Order to Revenue)"
+    )
+    revenueAmortizationMethod: Optional[str] = Field(
+        None, description="Revenue amortization method (Order to Revenue)"
+    )
+    productCategory: Optional[str] = Field(
+        None, description="Product category for Zuora Revenue integration"
+    )
+    productClass: Optional[str] = Field(
+        None, description="Product class for Zuora Revenue integration"
+    )
+    productFamily: Optional[str] = Field(
+        None, description="Product family for Zuora Revenue integration"
+    )
+    productLine: Optional[str] = Field(
+        None, description="Product line for Zuora Revenue integration"
+    )
+
+    # ============ Tax Fields ============
+    taxable: Optional[bool] = Field(
+        None,
+        description="Whether charge is taxable. Requires TaxMode and TaxCode if true.",
+    )
+    taxCode: Optional[str] = Field(
+        None, description="Tax code (max 64 chars). Required when Taxable=true."
+    )
+    taxMode: Optional[ZUORA_TAX_MODE] = Field(
+        None,
+        description="'TaxExclusive' or 'TaxInclusive'. Required when Taxable=true.",
+    )
+
+    # ============ Proration Fields ============
+    prorationOption: Optional[ZUORA_PRORATION_OPTION] = Field(
+        None, description="Charge-level proration option"
+    )
+
+    # ============ Prepaid with Drawdown Fields ============
+    chargeFunction: Optional[ZUORA_CHARGE_FUNCTION] = Field(
+        None, description="Charge function type (Prepaid with Drawdown feature)"
+    )
+    commitmentType: Optional[ZUORA_COMMITMENT_TYPE] = Field(
+        None,
+        description="Commitment type: 'UNIT' or 'CURRENCY' (Prepaid with Drawdown)",
+    )
+    creditOption: Optional[ZUORA_CREDIT_OPTION] = Field(
+        None,
+        description="Credit calculation: 'TimeBased', 'ConsumptionBased', 'FullCreditBack'",
+    )
+    drawdownRate: Optional[float] = Field(
+        None, description="Conversion rate between Usage UOM and Drawdown UOM"
+    )
+    drawdownUom: Optional[str] = Field(None, description="Drawdown unit of measure")
+    isPrepaid: Optional[bool] = Field(
+        None, description="Whether this is a prepayment (topup) or drawdown charge"
+    )
+    prepaidOperationType: Optional[ZUORA_PREPAID_OPERATION_TYPE] = Field(
+        None, description="'topup' or 'drawdown'"
+    )
     prepaidQuantity: Optional[float] = Field(
-        None, description="Units included in prepaid"
+        None, description="Units included in prepayment charge"
+    )
+    prepaidTotalQuantity: Optional[float] = Field(
+        None, description="Total units available during validity period"
     )
     prepaidUom: Optional[str] = Field(
-        None, description="Unit of measure for prepaid balance"
+        None, description="Unit of measure for prepayment"
     )
-    validityPeriodType: Optional[str] = Field(
-        None, description="SUBSCRIPTION_TERM, ANNUAL, SEMI_ANNUAL, QUARTER, MONTH"
+    validityPeriodType: Optional[ZUORA_VALIDITY_PERIOD_TYPE] = Field(
+        None,
+        description="Prepaid validity period: 'SUBSCRIPTION_TERM', 'ANNUAL', 'SEMI_ANNUAL', 'QUARTER', 'MONTH'",
     )
-    # Rollover fields
     isRollover: Optional[bool] = Field(None, description="Enable rollover for prepaid")
+    rolloverApply: Optional[ZUORA_ROLLOVER_APPLY] = Field(
+        None, description="Rollover priority: 'ApplyFirst' or 'ApplyLast'"
+    )
     rolloverPeriods: Optional[int] = Field(
         None, description="Number of rollover periods (max 3)"
     )
-    # Legacy fields for backward compatibility
+    rolloverPeriodLength: Optional[int] = Field(
+        None, description="Rollover fund period length (shorter than validity period)"
+    )
+
+    # ============ Identification Fields ============
+    description: Optional[str] = Field(
+        None, description="Charge description (max 500 chars)"
+    )
+    productRatePlanChargeNumber: Optional[str] = Field(
+        None, description="Natural key (max 100 chars). Auto-generated if null."
+    )
+
+    # ============ Attribute-based Pricing ============
+    formula: Optional[str] = Field(
+        None, description="Price lookup formula for Attribute-based Pricing"
+    )
+    chargeModelConfiguration: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Container for charge model configuration (Multi-Attribute/Pre-Rated Pricing)",
+    )
+    deliverySchedule: Optional[Dict[str, Any]] = Field(
+        None, description="Delivery schedule configuration (Delivery Pricing)"
+    )
+
+    # ============ Legacy fields for backward compatibility ============
     prepaidLoadAmount: Optional[float] = Field(
         None, description="Deprecated: use prepaidQuantity"
     )
@@ -172,18 +542,91 @@ class Charge(BaseModel):
 
 
 class RatePlan(BaseModel):
-    name: str
-    description: Optional[str] = None
-    charges: List[Charge] = []
+    """Product Rate Plan model matching Zuora v1 API schema.
+
+    See: https://developer.zuora.com/v1-api-reference/api/operation/Object_POSTProductRatePlan/
+    """
+
+    # Required fields
+    name: str = Field(..., description="Rate plan name (max 255 chars)")
+    productId: Optional[str] = Field(
+        None,
+        description="Product ID (required for API, use @{Product.Id} for batch creation)",
+    )
+
+    # Optional fields
+    description: Optional[str] = Field(
+        None, description="Rate plan description (max 500 chars)"
+    )
+    activeCurrencies: Optional[List[str]] = Field(
+        None,
+        description="List of 3-letter currency codes (e.g., ['USD', 'EUR']). Max 5 currencies.",
+    )
+    effectiveStartDate: Optional[str] = Field(
+        None, description="Date when rate plan becomes available (yyyy-mm-dd)"
+    )
+    effectiveEndDate: Optional[str] = Field(
+        None, description="Date when rate plan expires (yyyy-mm-dd)"
+    )
+    externalIdSourceSystem: Optional[str] = Field(
+        None, description="ID of external source system (requires WSDL version 130+)"
+    )
+    externalRatePlanIds: Optional[str] = Field(
+        None,
+        description="Comma-separated external IDs for imported rate plans (requires WSDL version 130+)",
+    )
+    grade: Optional[float] = Field(
+        None,
+        description="Grade for Grading catalog groups. Must be positive integer. Higher = higher grade.",
+    )
+    productRatePlanNumber: Optional[str] = Field(
+        None,
+        description="Natural key (max 100 chars). Auto-generated if null. Requires WSDL version 133+",
+    )
+
+    # Nested objects
+    charges: List[Charge] = Field(
+        default_factory=list, description="Charges for this rate plan"
+    )
 
 
 class Product(BaseModel):
-    name: str
-    sku: str
-    description: Optional[str] = None
-    effectiveStartDate: str
-    effectiveEndDate: Optional[str] = None
-    ratePlans: List[RatePlan] = []
+    """Product model matching Zuora v1 API schema.
+
+    See: https://developer.zuora.com/v1-api-reference/api/operation/Object_POSTProduct/
+    """
+
+    # Required fields
+    name: str = Field(..., description="Product name (max 100 chars)")
+    effectiveStartDate: str = Field(
+        ..., description="Date when product becomes available (yyyy-mm-dd)"
+    )
+    effectiveEndDate: str = Field(
+        ..., description="Date when product expires (yyyy-mm-dd)"
+    )
+
+    # Optional fields
+    sku: Optional[str] = Field(None, description="Unique SKU (max 50 chars)")
+    description: Optional[str] = Field(
+        None, description="Product description (max 500 chars)"
+    )
+    allowFeatureChanges: Optional[bool] = Field(
+        None,
+        description="Allow users to add/remove features during subscription creation/amendment. Default: false",
+    )
+    category: Optional[ZUORA_PRODUCT_CATEGORY] = Field(
+        None,
+        description="Category for Zuora Quotes: 'Base Products', 'Add On Services', 'Miscellaneous Products'",
+    )
+    productNumber: Optional[str] = Field(
+        None,
+        description="Natural key of the product (max 100 chars). Auto-generated if null",
+    )
+
+    # Nested objects
+    ratePlans: List[RatePlan] = Field(
+        default_factory=list, description="Rate plans for this product"
+    )
 
 
 class ProductSpec(BaseModel):
