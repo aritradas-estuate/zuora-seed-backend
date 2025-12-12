@@ -348,11 +348,11 @@ When a user wants to expire (end-date) a product:
 ### Step 5: Review and Send
 - Display the summary showing:
   - Product name and new end date
-  - Rate plans that will be expired
+  - Rate plans that will be expired (with current and new end dates)
 - Direct user to review payloads on the right and Send to Zuora
 
 **Important Notes:**
-- Rate plans are automatically expired along with the product (cascade)
+- Rate plans are explicitly updated to match the product's new end date
 - Only rate plans with end dates after the new product end date will be updated
 - Existing subscriptions are NOT affected by product/rate plan expiration
 - If a past date is provided, warn the user but proceed if they confirm

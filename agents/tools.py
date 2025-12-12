@@ -1105,14 +1105,13 @@ def expire_product(
     tool_context: ToolContext,
     product_id: str,
     new_end_date: str,
-    expire_rate_plans: bool = True,
 ) -> str:
     """
-    Expire a product by setting its effective end date, with cascade to rate plans.
+    Expire a product and all its rate plans by setting the same effective end date.
 
     Generates update payloads for:
     1. The product (sets EffectiveEndDate)
-    2. All associated rate plans whose end date is after the new end date (if expire_rate_plans=True)
+    2. All associated rate plans whose end date is after the new end date
 
     IMPORTANT: Call get_zuora_product first to verify the product exists and show
     the user its current details before calling this tool.
@@ -1121,7 +1120,6 @@ def expire_product(
         product_id: Zuora Product ID (e.g., '8a8080...' or '2c92c0f...')
         new_end_date: New effective end date in YYYY-MM-DD format.
                      Use today's date for immediate expiration.
-        expire_rate_plans: Whether to also expire all rate plans (default: True)
 
     Returns:
         Summary of generated payloads and affected entities
@@ -1130,7 +1128,7 @@ def expire_product(
 
     logger.info(
         f"[TOOL CALL] expire_product: product_id={product_id}, "
-        f"new_end_date={new_end_date}, expire_rate_plans={expire_rate_plans}"
+        f"new_end_date={new_end_date}"
     )
 
     # 1. Validate date format
@@ -1201,44 +1199,43 @@ If you want to extend the product, use `update_zuora_product` to set a new end d
     }
     payloads.append(product_payload)
 
-    # 7. Generate rate plan update payloads (if cascade)
+    # 7. Generate rate plan update payloads
     rate_plans_to_expire: List[Dict[str, Any]] = []
     rate_plans_skipped: List[Dict[str, Any]] = []
 
-    if expire_rate_plans and rate_plans:
-        for rp in rate_plans:
-            rp_id = rp.get("id")
-            rp_name = rp.get("name", "Unknown")
-            rp_current_end = rp.get("effectiveEndDate")
+    for rp in rate_plans:
+        rp_id = rp.get("id")
+        rp_name = rp.get("name", "Unknown")
+        rp_current_end = rp.get("effectiveEndDate")
 
-            # Only update if rate plan's end date is after the new product end date
-            if rp_current_end and rp_current_end > new_end_date:
-                rp_payload = {
-                    "payload": {
-                        "method": "PUT",
-                        "endpoint": f"/v1/object/product-rate-plan/{rp_id}",
-                        "body": {"EffectiveEndDate": new_end_date},
-                    },
-                    "zuora_api_type": "rate_plan_update",
-                    "payload_id": str(uuid.uuid4())[:8],
+        # Only update if rate plan's end date is after the new product end date
+        if rp_current_end and rp_current_end > new_end_date:
+            rp_payload = {
+                "payload": {
+                    "method": "PUT",
+                    "endpoint": f"/v1/object/product-rate-plan/{rp_id}",
+                    "body": {"EffectiveEndDate": new_end_date},
+                },
+                "zuora_api_type": "rate_plan_update",
+                "payload_id": str(uuid.uuid4())[:8],
+            }
+            payloads.append(rp_payload)
+            rate_plans_to_expire.append(
+                {
+                    "name": rp_name,
+                    "id": rp_id,
+                    "current_end": rp_current_end,
+                    "new_end": new_end_date,
                 }
-                payloads.append(rp_payload)
-                rate_plans_to_expire.append(
-                    {
-                        "name": rp_name,
-                        "id": rp_id,
-                        "current_end": rp_current_end,
-                        "new_end": new_end_date,
-                    }
-                )
-            else:
-                rate_plans_skipped.append(
-                    {
-                        "name": rp_name,
-                        "current_end": rp_current_end or "N/A",
-                        "reason": "Already expires on or before new date",
-                    }
-                )
+            )
+        else:
+            rate_plans_skipped.append(
+                {
+                    "name": rp_name,
+                    "current_end": rp_current_end or "N/A",
+                    "reason": "Already expires on or before new date",
+                }
+            )
 
     # 8. Save payloads to state
     tool_context.agent.state.set(PAYLOADS_STATE_KEY, payloads)
