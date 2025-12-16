@@ -144,19 +144,20 @@ REQUIRED_FIELDS = {
             "ChargeModel=Discount-Fixed Amount": ["ApplyDiscountTo", "DiscountLevel"],
             "ChargeModel=Discount-Percentage": ["ApplyDiscountTo", "DiscountLevel"],
             # Prepaid with Drawdown conditional requirements
-            "ChargeModel=Prepaid with Drawdown": [
+            # Prepaid topup charges (IsPrepaid=true + PrepaidOperationType=topup)
+            "IsPrepaid=true,PrepaidOperationType=topup": [
                 "PrepaidQuantity",
                 "PrepaidUom",
-                "CommitmentType",
                 "ValidityPeriodType",
             ],
-            "ChargeFunction=Drawdown": ["UOM"],
+            # Drawdown charges require BillingPeriod but NOT BillingTiming
+            "ChargeFunction=Drawdown": ["UOM", "BillingPeriod", "DrawdownUom"],
         },
         "descriptions": {
             # Core Required Fields
             "Name": "Charge name (max 100 chars)",
             "ProductRatePlanId": "Rate plan ID (use @{ProductRatePlan.Id} or @{ProductRatePlan[0].Id})",
-            "ChargeModel": "Pricing model: 'Flat Fee Pricing', 'Per Unit Pricing', 'Tiered Pricing', 'Volume Pricing', 'Overage Pricing', 'Tiered with Overage Pricing', 'Discount-Fixed Amount', 'Discount-Percentage', 'Delivery Pricing', 'MultiAttributePricing', 'Prepaid with Drawdown'",
+            "ChargeModel": "Pricing model: 'Flat Fee Pricing', 'Per Unit Pricing', 'Tiered Pricing', 'Volume Pricing', 'Overage Pricing', 'Tiered with Overage Pricing', 'Discount-Fixed Amount', 'Discount-Percentage', 'Delivery Pricing', 'MultiAttributePricing'",
             "ChargeType": "Charge type: 'OneTime', 'Recurring', or 'Usage'",
             "BillCycleType": "Billing day type: 'DefaultFromCustomer', 'SpecificDayofMonth', 'SubscriptionStartDay', 'ChargeTriggerDay', 'SpecificDayofWeek', 'TermStartDay', 'TermEndDay'",
             "BillingPeriod": "Billing period (Recurring charges only): 'Month', 'Quarter', 'Annual', 'Semi-Annual', 'Specific Months', 'Specific Weeks', 'Specific Days', 'Subscription Term', 'Week'. Not applicable to OneTime or Usage charges.",
@@ -257,22 +258,23 @@ REQUIRED_FIELDS = {
             "ChargeModel=Discount-Fixed Amount": ["ApplyDiscountTo", "DiscountLevel"],
             "ChargeModel=Discount-Percentage": ["ApplyDiscountTo", "DiscountLevel"],
             # Prepaid with Drawdown conditional requirements
-            "ChargeModel=Prepaid with Drawdown": [
+            # Prepaid topup charges (IsPrepaid=true + PrepaidOperationType=topup)
+            "IsPrepaid=true,PrepaidOperationType=topup": [
                 "PrepaidQuantity",
                 "PrepaidUom",
-                "CommitmentType",
                 "ValidityPeriodType",
             ],
-            "ChargeFunction=Drawdown": ["UOM"],
+            # Drawdown charges require BillingPeriod but NOT BillingTiming
+            "ChargeFunction=Drawdown": ["UOM", "BillingPeriod", "DrawdownUom"],
         },
         "descriptions": {
             # Core Required Fields
             "Name": "Charge name (max 100 chars)",
             "ProductRatePlanId": "Rate plan ID or object reference (e.g., '@{ProductRatePlan[0].Id}')",
-            "ChargeModel": "Pricing model: 'Flat Fee Pricing', 'Per Unit Pricing', 'Tiered Pricing', 'Volume Pricing', 'Overage Pricing', 'Tiered with Overage Pricing', 'Discount-Fixed Amount', 'Discount-Percentage', 'Delivery Pricing', 'MultiAttributePricing', 'Prepaid with Drawdown'",
+            "ChargeModel": "Pricing model: 'Flat Fee Pricing', 'Per Unit Pricing', 'Tiered Pricing', 'Volume Pricing', 'Overage Pricing', 'Tiered with Overage Pricing', 'Discount-Fixed Amount', 'Discount-Percentage', 'Delivery Pricing', 'MultiAttributePricing'",
             "ChargeType": "Charge type: 'OneTime', 'Recurring', or 'Usage'",
             "BillCycleType": "Billing day type: 'DefaultFromCustomer', 'SpecificDayofMonth', 'SubscriptionStartDay', 'ChargeTriggerDay', 'SpecificDayofWeek', 'TermStartDay', 'TermEndDay'",
-            "BillingPeriod": "Billing period (Recurring charges only): 'Month', 'Quarter', 'Annual', 'Semi-Annual', 'Specific Months', 'Specific Weeks', 'Specific Days', 'Subscription Term', 'Week'. Not applicable to OneTime or Usage charges.",
+            "BillingPeriod": "Billing period: 'Month', 'Quarter', 'Annual', 'Semi-Annual', 'Specific Months', 'Specific Weeks', 'Specific Days', 'Subscription Term', 'Week'. Required for Recurring charges and Drawdown (Usage) charges.",
             "TriggerEvent": "When billing starts: 'ContractEffective', 'ServiceActivation', 'CustomerAcceptance'",
             "ProductRatePlanChargeTierData": "Container for pricing tiers with currency and price",
             # Pricing Fields
@@ -499,26 +501,39 @@ def validate_payload(
 
     # Check "conditional" required fields
     for condition, conditional_fields in schema.get("conditional", {}).items():
-        # Parse condition like "ChargeType=Recurring"
-        if "=" in condition:
-            cond_field, cond_value = condition.split("=", 1)
-            # Get actual value from payload (case-insensitive)
-            actual_value = None
-            for key in payload_data.keys():
-                if key.lower() == cond_field.lower():
-                    actual_value = payload_data[key]
-                    break
+        # Support compound conditions (comma-separated), e.g. "IsPrepaid=true,PrepaidOperationType=topup"
+        condition_parts = condition.split(",")
+        all_conditions_met = True
+        condition_description_parts = []
 
-            # Check if condition is met
-            if actual_value and str(actual_value).upper() == cond_value.upper():
-                # Condition met, check required fields
-                for field in conditional_fields:
-                    if not _check_field_exists(payload_data, field):
-                        desc = descriptions.get(field, field)
-                        cond_desc = (
-                            f"{desc} (required because {cond_field}={cond_value})"
-                        )
-                        missing.append((field, cond_desc))
+        for cond_part in condition_parts:
+            if "=" in cond_part:
+                cond_field, cond_value = cond_part.split("=", 1)
+                # Get actual value from payload (case-insensitive)
+                actual_value = None
+                for key in payload_data.keys():
+                    if key.lower() == cond_field.lower():
+                        actual_value = payload_data[key]
+                        break
+
+                # Check if this part of the condition is met
+                if actual_value and str(actual_value).upper() == cond_value.upper():
+                    condition_description_parts.append(f"{cond_field}={cond_value}")
+                else:
+                    all_conditions_met = False
+                    break
+            else:
+                all_conditions_met = False
+                break
+
+        # If all conditions are met, check required fields
+        if all_conditions_met:
+            condition_desc_str = " and ".join(condition_description_parts)
+            for field in conditional_fields:
+                if not _check_field_exists(payload_data, field):
+                    desc = descriptions.get(field, field)
+                    cond_desc = f"{desc} (required because {condition_desc_str})"
+                    missing.append((field, cond_desc))
 
     return (len(missing) == 0, missing)
 

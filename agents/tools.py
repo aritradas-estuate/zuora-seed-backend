@@ -1747,11 +1747,10 @@ CHARGE_MODEL_MAPPING = {
     "discount-fixed amount": "Discount-Fixed Amount",
     "discount-percentage": "Discount-Percentage",
     "discount-pct": "Discount-Percentage",
-    # Prepaid with Drawdown mappings
-    "prepaid": "Prepaid with Drawdown",
-    "prepaid with drawdown": "Prepaid with Drawdown",
-    "prepaidwithdrawdown": "Prepaid with Drawdown",
-    "drawdown": "Per Unit Pricing",  # Drawdown charges use Per Unit Pricing
+    # Prepaid charges typically use Flat Fee Pricing with IsPrepaid=true
+    "prepaid": "Flat Fee Pricing",
+    # Drawdown charges use Per Unit Pricing with ChargeFunction=Drawdown
+    "drawdown": "Per Unit Pricing",
 }
 
 
@@ -3115,7 +3114,7 @@ def create_prepaid_charge(
     # Credit option for unused balance at end of validity period
     credit_option: Literal[
         "TimeBased", "ConsumptionBased", "FullCreditBack"
-    ] = "FullCreditBack",
+    ] = "ConsumptionBased",
     # Rollover settings
     is_rollover: bool = True,
     rollover_apply: Literal["ApplyFirst", "ApplyLast"] = "ApplyFirst",
@@ -3220,9 +3219,10 @@ def create_prepaid_charge(
         name=name,
         description=description,
         product_rate_plan_charge_number=charge_number,
-        # Prepaid charges are Recurring with "Prepaid with Drawdown" model
+        # Prepaid charges are Recurring with standard charge model (e.g., Flat Fee Pricing)
+        # The prepaid behavior is controlled by IsPrepaid=true and PrepaidOperationType=topup
         charge_type="Recurring",
-        charge_model="Prepaid with Drawdown",
+        charge_model="Flat Fee Pricing",
         price=price,
         currency=currency,
         currencies=currencies,
@@ -3253,16 +3253,34 @@ def create_drawdown_charge(
     tool_context: ToolContext,
     name: str,
     uom: str,
+    # Drawdown UOM - required, the UOM to draw from the prepaid balance
+    drawdown_uom: str,
     # Rate plan reference
     rate_plan_id: Optional[str] = None,
     rate_plan_index: Optional[int] = None,
     # Drawdown configuration - for different UOM than prepaid
     drawdown_rate: Optional[float] = None,
-    drawdown_uom: Optional[str] = None,
     # Overage handling
     overage_price: Optional[float] = None,
     allow_overage: bool = True,
-    # Billing configuration
+    # Billing configuration - BillingPeriod is required for drawdown, but NOT BillingTiming
+    billing_period: Literal[
+        "Month",
+        "Quarter",
+        "Annual",
+        "Semi-Annual",
+        "Week",
+        "Specific Months",
+        "Specific Weeks",
+        "Specific Days",
+        "Subscription Term",
+    ] = "Month",
+    billing_period_alignment: Literal[
+        "AlignToCharge",
+        "AlignToSubscriptionStart",
+        "AlignToTermStart",
+        "AlignToTermEnd",
+    ] = "AlignToCharge",
     bill_cycle_type: Literal[
         "DefaultFromCustomer",
         "SpecificDayofMonth",
@@ -3299,23 +3317,26 @@ def create_drawdown_charge(
     the prepaid balance.
 
     Per Zuora Prepaid with Drawdown feature:
-    - Must be a Usage charge type
+    - Must be a Usage charge type (ChargeType=Usage)
+    - Requires BillingPeriod but NOT BillingTiming
     - UOM should match the prepaid charge's UOM (or use drawdown_rate for conversion)
     - Multiple drawdown charges can share the same prepaid balance
 
     Args:
         name: Charge name (e.g., "API Usage - Drawdown")
-        uom: Unit of measure for usage tracking (should match prepaid UOM)
+        uom: Unit of measure for usage tracking
+        drawdown_uom: The prepaid UOM to draw from (required for drawdown charges)
         rate_plan_id: Zuora rate plan ID or object reference
         rate_plan_index: Index of rate plan in batch for auto-reference
-        drawdown_rate: Conversion rate if drawdown UOM differs from prepaid UOM
+        drawdown_rate: Conversion rate if usage UOM differs from prepaid UOM
             Example: If prepaid is "CREDIT" and usage is "REPORT", and 1 report = 5 credits,
             set drawdown_rate=5 and drawdown_uom="CREDIT"
-        drawdown_uom: The prepaid UOM to draw from (if different from charge UOM)
         overage_price: Price per unit when prepaid balance is exhausted
             If None and allow_overage=True, overage usage is not charged (free overage)
             If None and allow_overage=False, usage beyond balance may be blocked
         allow_overage: Whether to allow usage beyond prepaid balance
+        billing_period: Billing period (required for drawdown charges, default: Month)
+        billing_period_alignment: Align charges within subscription (default: AlignToCharge)
         bill_cycle_type: How to determine billing day
         trigger_event: When billing starts
         rating_group: How to aggregate usage for rating
@@ -3330,21 +3351,23 @@ def create_drawdown_charge(
     Example - Simple drawdown (same UOM as prepaid):
         create_drawdown_charge(
             name="API Usage",
-            uom="API_CALL"
+            uom="Million calls",
+            drawdown_uom="Million calls"
         )
 
     Example - Different UOM with conversion rate:
         create_drawdown_charge(
             name="Report Generation",
             uom="REPORT",
-            drawdown_rate=5,  # 1 report = 5 credits
-            drawdown_uom="CREDIT"
+            drawdown_uom="CREDIT",
+            drawdown_rate=5  # 1 report = 5 credits
         )
 
     Example - With overage pricing:
         create_drawdown_charge(
             name="API Usage with Overage",
             uom="API_CALL",
+            drawdown_uom="API_CALL",
             overage_price=0.001  # $0.001 per call after prepaid exhausted
         )
     """
@@ -3363,6 +3386,7 @@ def create_drawdown_charge(
         # depends on tenant's overage handling configuration
 
     # Use create_charge with drawdown-specific settings
+    # Note: Drawdown charges require BillingPeriod but NOT BillingTiming
     return create_charge(
         tool_context=tool_context,
         rate_plan_id=rate_plan_id,
@@ -3377,7 +3401,9 @@ def create_drawdown_charge(
         currency=currency,
         currencies=currencies,
         uom=uom,
-        # Billing configuration
+        # Billing configuration - BillingPeriod required, NO BillingTiming for drawdown
+        billing_period=billing_period,
+        billing_period_alignment=billing_period_alignment,
         bill_cycle_type=bill_cycle_type,
         trigger_event=trigger_event,
         rating_group=rating_group,
@@ -3440,10 +3466,12 @@ def generate_prepaid_config(
         Complete configuration guide for Prepaid with Drawdown setup.
     """
     # Prepaid charge configuration
+    # Note: Prepaid topup uses standard charge models (e.g., Flat Fee Pricing)
+    # The prepaid behavior is controlled by IsPrepaid=true and PrepaidOperationType=topup
     prepaid_charge_config = {
         "name": f"{rate_plan_name} - Prepaid {prepaid_uom}",
         "ChargeType": "Recurring",
-        "ChargeModel": "Prepaid with Drawdown",
+        "ChargeModel": "Flat Fee Pricing",
         "BillingPeriod": "Month",
         "BillingTiming": "In Advance",
         "ChargeFunction": "Prepayment",
@@ -3456,18 +3484,23 @@ def generate_prepaid_config(
         "IsRollover": is_rollover,
         "RolloverPeriods": rollover_periods if is_rollover else None,
         "RolloverApply": "ApplyFirst" if is_rollover else None,
+        "CreditOption": "ConsumptionBased",
         "pricing": [{"currency": "USD", "price": prepaid_amount}],
     }
 
     # Drawdown charge configuration
+    # Note: Drawdown charges require BillingPeriod but NOT BillingTiming
     drawdown_charge_config = {
         "name": f"{rate_plan_name} - {prepaid_uom} Usage",
         "ChargeType": "Usage",
         "ChargeModel": "Per Unit Pricing",
         "ChargeFunction": "Drawdown",
+        "BillingPeriod": "Month",
+        "BillingPeriodAlignment": "AlignToCharge",
         "IsPrepaid": True,
         "PrepaidOperationType": "drawdown",
         "UOM": prepaid_uom,
+        "DrawdownUom": prepaid_uom,
         "pricing": [{"currency": "USD", "price": 0}],
     }
 

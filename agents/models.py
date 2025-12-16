@@ -38,7 +38,6 @@ ZUORA_CHARGE_MODELS = Literal[
     "PreratedPricing",
     "HighWatermarkVolumePricing",
     "HighWatermarkTieredPricing",
-    "Prepaid with Drawdown",  # For prepayment charges that create prepaid balances
 ]
 
 # ChargeType enum values
