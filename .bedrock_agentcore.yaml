@@ -2,12 +2,12 @@ default_agent: zuora_seed
 agents:
   zuora_seed:
     name: zuora_seed
-    entrypoint: /Users/aritra/Documents/Code/estuate/zuora_seed_backend/agentcore_app.py
+    entrypoint: /Users/aritra/Documents/Code/estuate/zuora/backend/agentcore_app.py
     deployment_type: direct_code_deploy
     runtime_type: PYTHON_3_10
     platform: linux/arm64
     container_runtime: null
-    source_path: /Users/aritra/Documents/Code/estuate/zuora_seed_backend
+    source_path: /Users/aritra/Documents/Code/estuate/zuora/backend
     aws:
       execution_role: arn:aws:iam::870678671753:role/AmazonBedrockAgentCoreSDKRuntime-us-east-2-494e65ea17
       execution_role_auto_create: false
@@ -28,8 +28,8 @@ agents:
         idle_runtime_session_timeout: null
         max_lifetime: null
     bedrock_agentcore:
-      agent_id: zuora_seed-XdxAtV5qav
-      agent_arn: arn:aws:bedrock-agentcore:us-east-2:870678671753:runtime/zuora_seed-XdxAtV5qav
+      agent_id: zuora_backend-kNqIv8GSk3
+      agent_arn: arn:aws:bedrock-agentcore:us-east-2:870678671753:runtime/zuora_backend-kNqIv8GSk3
       agent_session_id: null
     codebuild:
       project_name: null
