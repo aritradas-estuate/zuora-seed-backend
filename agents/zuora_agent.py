@@ -46,6 +46,11 @@ from .tools import (
     generate_custom_field_definition,
     validate_billing_configuration,
     get_zuora_documentation,
+    # PWD SeedSpec tools (Architect Persona)
+    generate_pwd_seedspec,
+    validate_pwd_spec,
+    generate_pwd_planning_payloads,
+    get_pwd_knowledge_base,
 )
 
 logger = logging.getLogger(__name__)
@@ -520,7 +525,41 @@ create_drawdown_charge(
 
 Use `generate_prepaid_config()` for comprehensive advisory guidance including auto top-up workflows.
 
-## Workflow
+## PWD SeedSpec Workflow (Architect Scenarios Arch-1 through Arch-6)
+
+When creating a Prepaid Drawdown Wallet specification:
+
+### 1. Gather Requirements (ask if not provided)
+- Product name and SKU
+- UOM for credits (e.g., api_call, credit)
+- Currencies needed (e.g., USD, EUR)
+- Prepaid plan(s): quantity, price per currency, billing period
+- Wallet policies: pooling, rollover %, cap, auto top-up threshold
+- Top-up packs (if any)
+- Overage handling
+
+### 2. Generate & Validate
+Use `generate_pwd_seedspec()` which automatically:
+- Validates against PWD rules (drawdown=0, thresholds, etc.)
+- Checks tenant UOM/currency compatibility
+- Applies rollover defaults if cap missing
+- Returns summary + raw JSON + placeholder map
+
+### 3. Handle Validation Issues
+- UOM/currency not found: Show suggestions with numbered options, ASK user which fix to apply
+- Thresholds invalid: Show error + recommendation, ASK for corrected value
+- Rollover cap missing: Auto-calculate and explain the assumption
+
+### 4. Planning Mode
+Use `generate_pwd_planning_payloads()` for placeholder-based payloads:
+- Show placeholder map: {{PRODUCT_ID}}, {{RP_*_ID}}, {{CHARGE_*_ID}}
+- Display JSON payloads for Product, Rate Plans, Charges
+- Do NOT add to execution queue - this is advisory only
+
+### 5. KB Reference
+Use `get_pwd_knowledge_base()` to provide best practices and implementation guidance with KB links.
+
+## General Workflow
 1. **Understand**: Restate scenario (<h3>Understanding Your Request</h3>).
 2. **Generate Guides**: Create complete advisory payloads with {{REPLACE_WITH_...}} markers for user-specific values.
 3. **Advise**: Provide detailed response:
@@ -602,6 +641,11 @@ BILLING_ARCHITECT_TOOLS = [
     generate_custom_field_definition,
     validate_billing_configuration,
     get_zuora_documentation,
+    # PWD SeedSpec tools (Architect Persona)
+    generate_pwd_seedspec,
+    validate_pwd_spec,
+    generate_pwd_planning_payloads,
+    get_pwd_knowledge_base,
 ]
 
 # ============ Agent Factory ============

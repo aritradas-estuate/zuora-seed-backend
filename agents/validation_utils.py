@@ -314,3 +314,229 @@ def validate_charge_name_unique(
                 )
 
     return (True, None)
+
+
+# ============ PWD Validation Functions (Architect Persona) ============
+
+
+def validate_pwd_drawdown_price(price: float) -> Tuple[bool, Optional[str]]:
+    """
+    Validate drawdown price is 0 (usage draws from prepaid balance).
+
+    Per Zuora PWD model, drawdown charges should have price=$0 because
+    usage is "free" - already paid for via the prepaid charge.
+
+    Args:
+        price: The drawdown charge price
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    if price != 0:
+        return (
+            False,
+            f"Drawdown price must be $0 (got ${price}). "
+            "Usage is 'free' - already paid via prepaid charge.",
+        )
+    return True, None
+
+
+def validate_pwd_thresholds(
+    monthly_load: float,
+    auto_topup_threshold: Optional[float],
+    rollover_cap: Optional[float],
+    rollover_pct: Optional[float],
+) -> Tuple[bool, List[str], List[str]]:
+    """
+    Validate PWD threshold configuration sanity.
+
+    Rules:
+    1. auto_topup_threshold < monthly_load (otherwise triggers before any usage)
+    2. rollover_cap should align with rollover_pct if both set
+
+    Args:
+        monthly_load: Units loaded per billing period
+        auto_topup_threshold: Balance threshold to trigger top-up
+        rollover_cap: Maximum units that can roll over
+        rollover_pct: Percentage of unused balance to roll over
+
+    Returns:
+        Tuple of (is_valid, errors, recommendations)
+    """
+    errors = []
+    recommendations = []
+
+    # Rule 1: Auto top-up threshold must be less than monthly load
+    if auto_topup_threshold is not None:
+        if auto_topup_threshold >= monthly_load:
+            errors.append(
+                f"Auto top-up threshold ({auto_topup_threshold:,.0f}) must be < "
+                f"monthly load ({monthly_load:,.0f}). "
+                f"With threshold >= load, top-up triggers before any usage occurs."
+            )
+            safe_threshold = monthly_load * 0.2  # 20% is typical
+            recommendations.append(
+                f"Suggested threshold: {safe_threshold:,.0f} (20% of monthly load)"
+            )
+        elif auto_topup_threshold > monthly_load * 0.8:
+            recommendations.append(
+                f"Warning: Threshold ({auto_topup_threshold:,.0f}) is >80% of load. "
+                f"Consider lowering to avoid premature top-ups."
+            )
+
+    # Rule 2: Rollover cap vs percentage alignment
+    if rollover_pct is not None and rollover_cap is not None:
+        expected_cap = monthly_load * (rollover_pct / 100)
+        if rollover_cap > expected_cap * 1.5:  # Allow some flexibility
+            recommendations.append(
+                f"Rollover cap ({rollover_cap:,.0f}) exceeds {rollover_pct}% of load "
+                f"({expected_cap:,.0f}). Consider aligning for consistency."
+            )
+
+    return len(errors) == 0, errors, recommendations
+
+
+def apply_pwd_rollover_defaults(
+    monthly_load: float,
+    rollover_pct: Optional[float],
+    rollover_cap: Optional[float],
+) -> Tuple[Optional[float], Optional[str]]:
+    """
+    Apply intelligent defaults for rollover cap.
+
+    If rollover_pct is set but rollover_cap is None:
+        rollover_cap = monthly_load * (rollover_pct / 100)
+
+    Args:
+        monthly_load: Units loaded per billing period
+        rollover_pct: Percentage of unused balance to roll over
+        rollover_cap: Maximum units that can roll over (may be None)
+
+    Returns:
+        Tuple of (calculated_cap, explanation)
+        explanation is None if no default was applied
+    """
+    if rollover_pct is not None and rollover_cap is None:
+        calculated_cap = monthly_load * (rollover_pct / 100)
+        explanation = (
+            f"No rollover_cap provided. Defaulted to {rollover_pct}% of monthly load: "
+            f"{calculated_cap:,.0f} units"
+        )
+        return calculated_cap, explanation
+    return rollover_cap, None
+
+
+def check_pwd_uom_compatibility(
+    spec_uom: str,
+    tenant_uoms: List[str],
+) -> Tuple[bool, Optional[dict]]:
+    """
+    Check if UOM exists in tenant and suggest fix if not.
+
+    Args:
+        spec_uom: UOM specified in the PWD spec
+        tenant_uoms: List of UOMs available in the tenant
+
+    Returns:
+        Tuple of (is_compatible, auto_fix_suggestion)
+        auto_fix_suggestion is None if compatible
+    """
+    # Exact match
+    if spec_uom in tenant_uoms:
+        return True, None
+
+    # Case-insensitive match
+    for uom in tenant_uoms:
+        if uom.lower() == spec_uom.lower():
+            return False, {
+                "field": "uom",
+                "original": spec_uom,
+                "suggestion": uom,
+                "action": "normalize_case",
+                "message": f"UOM '{spec_uom}' not found. Did you mean '{uom}'?",
+            }
+
+    # Common alias check
+    uom_aliases = {
+        "api_calls": "api_call",
+        "apicalls": "api_call",
+        "API_CALLS": "api_call",
+        "credits": "credit",
+        "CREDITS": "credit",
+        "Credit": "credit",
+        "messages": "sms",
+        "SMS": "sms",
+        "Message": "sms",
+        "gigabytes": "GB",
+        "gb": "GB",
+        "Gigabyte": "GB",
+        "megabytes": "MB",
+        "mb": "MB",
+        "hours": "Hour",
+        "hour": "Hour",
+        "Hours": "Hour",
+        "users": "User",
+        "user": "User",
+        "each": "Each",
+        "unit": "Each",
+        "units": "Each",
+    }
+
+    normalized = uom_aliases.get(spec_uom, uom_aliases.get(spec_uom.lower()))
+    if normalized:
+        for uom in tenant_uoms:
+            if uom.lower() == normalized.lower():
+                return False, {
+                    "field": "uom",
+                    "original": spec_uom,
+                    "suggestion": uom,
+                    "action": "normalize_alias",
+                    "message": f"UOM '{spec_uom}' normalized to tenant UOM '{uom}'",
+                }
+
+    # No match found
+    available_display = ", ".join(tenant_uoms[:8])
+    if len(tenant_uoms) > 8:
+        available_display += "..."
+
+    return False, {
+        "field": "uom",
+        "original": spec_uom,
+        "suggestion": None,
+        "action": "create_or_select",
+        "message": f"UOM '{spec_uom}' not found in tenant. Available UOMs: {available_display}",
+    }
+
+
+def check_pwd_currency_compatibility(
+    spec_currencies: List[str],
+    tenant_currencies: List[str],
+) -> Tuple[bool, List[dict]]:
+    """
+    Check if currencies exist in tenant and suggest fixes.
+
+    Args:
+        spec_currencies: Currencies specified in the PWD spec
+        tenant_currencies: Currencies enabled in the tenant
+
+    Returns:
+        Tuple of (all_compatible, list_of_issues)
+        list_of_issues is empty if all compatible
+    """
+    issues = []
+    tenant_currencies_upper = [c.upper() for c in tenant_currencies]
+
+    for currency in spec_currencies:
+        if currency.upper() not in tenant_currencies_upper:
+            issues.append(
+                {
+                    "field": "currency",
+                    "original": currency,
+                    "suggestion": None,
+                    "action": "enable_or_replace",
+                    "message": f"Currency '{currency}' not enabled in tenant. "
+                    f"Available: {', '.join(tenant_currencies)}",
+                }
+            )
+
+    return len(issues) == 0, issues

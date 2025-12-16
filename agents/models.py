@@ -915,6 +915,114 @@ class PrepaidBalanceConfig(BaseModel):
     overage_price_per_unit: Optional[float] = None
 
 
+# ============ PWD SeedSpec Models (Architect Persona) ============
+
+
+class WalletPolicy(BaseModel):
+    """Wallet-level policies for prepaid balance management."""
+
+    pooling_type: Literal["ACCOUNT", "SUBSCRIPTION"] = Field(
+        "ACCOUNT", description="Balance pooling level"
+    )
+    pooling_id: Optional[str] = Field(
+        "POOL-DEFAULT", description="Pool identifier for account-level pooling"
+    )
+    rollover_pct: Optional[float] = Field(
+        None, ge=0, le=100, description="Percentage of unused balance to roll over"
+    )
+    rollover_cap: Optional[float] = Field(
+        None,
+        ge=0,
+        description="Maximum units that can roll over (auto-calculated if not provided)",
+    )
+    rollover_expiry_months: int = Field(
+        1, ge=1, le=12, description="Months until rollover expires"
+    )
+    auto_topup_enabled: bool = Field(False, description="Enable auto top-up trigger")
+    auto_topup_threshold: Optional[float] = Field(
+        None, description="Balance threshold to trigger top-up (must be < monthly load)"
+    )
+    auto_topup_quantity: Optional[float] = Field(
+        None, description="Units to add on top-up"
+    )
+    auto_topup_prices: Optional[Dict[str, float]] = Field(
+        None,
+        description="Price per currency for top-up, e.g., {'USD': 500, 'EUR': 460}",
+    )
+
+
+class PrepaidPlanSpec(BaseModel):
+    """Specification for a prepaid rate plan."""
+
+    name: str = Field(..., description="Rate plan name, e.g., 'Wallet Monthly'")
+    is_recurring: bool = Field(
+        True, description="True for monthly reload, False for one-time"
+    )
+    billing_period: str = Field("Month", description="Month, Quarter, Annual, etc.")
+    prepaid_quantity: float = Field(..., description="Units loaded per period")
+    prices: Dict[str, float] = Field(
+        ..., description="Price per currency, e.g., {'USD': 500, 'EUR': 460}"
+    )
+    trigger_event: str = Field(
+        "ServiceActivation",
+        description="ContractEffective, ServiceActivation, CustomerAcceptance",
+    )
+    coterm: bool = Field(True, description="Co-term to account anniversary")
+    wallet_policy: Optional[WalletPolicy] = Field(
+        None, description="Wallet policies for this plan"
+    )
+
+
+class TopUpPackSpec(BaseModel):
+    """Specification for a one-time top-up pack."""
+
+    name: str = Field(..., description="Top-up pack name, e.g., 'Top-Up Pack 200K'")
+    quantity: float = Field(..., description="Units in the pack")
+    prices: Dict[str, float] = Field(..., description="Price per currency")
+
+
+class OverageSpec(BaseModel):
+    """Overage configuration when wallet is exhausted and auto top-up is OFF."""
+
+    enabled: bool = Field(True, description="Whether overage billing is enabled")
+    condition: str = Field("auto_topup_off", description="When overage applies")
+    prices_per_unit: Dict[str, float] = Field(
+        ...,
+        description="Overage price per unit per currency, e.g., {'USD': 0.007, 'EUR': 0.0065}",
+    )
+    billing_period: str = Field("Month", description="Billing period for overage")
+
+
+class PWDSeedSpec(BaseModel):
+    """Complete specification for a Prepaid Drawdown Wallet product."""
+
+    product_name: str = Field(
+        ..., description="Product name, e.g., 'API Credits Wallet'"
+    )
+    sku: str = Field(..., description="Product SKU, e.g., 'API-WALLET-100'")
+    uom: str = Field(..., description="Unit of measure for credits, e.g., 'api_call'")
+    currencies: List[str] = Field(
+        ..., description="Supported currencies, e.g., ['USD', 'EUR']"
+    )
+    prepaid_plans: List[PrepaidPlanSpec] = Field(..., description="Prepaid rate plans")
+    topup_packs: Optional[List[TopUpPackSpec]] = Field(
+        None, description="One-time top-up packs"
+    )
+    overage: Optional[OverageSpec] = Field(None, description="Overage configuration")
+    description: Optional[str] = Field(None, description="Product description")
+
+
+class PWDValidationResult(BaseModel):
+    """Result of PWD spec validation."""
+
+    is_valid: bool
+    errors: List[str] = []
+    warnings: List[str] = []
+    auto_fix_suggestions: List[Dict[str, Any]] = []
+    tenant_issues: List[Dict[str, Any]] = []
+    applied_defaults: List[str] = []
+
+
 # ============ Account Custom Field Models ============
 
 
