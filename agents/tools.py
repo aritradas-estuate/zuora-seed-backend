@@ -2862,12 +2862,14 @@ def create_charge(
                 }
             )
 
-        # Auto-set PriceIncreaseOption if percentage provided but option not specified
-        if not price_increase_option:
-            payload_data["PriceIncreaseOption"] = "SpecificPercentageValue"
+        # Auto-set PriceChangeOption if percentage provided but option not specified
+        # Note: PriceChangeOption is the correct field per Zuora API docs
+        # https://developer.zuora.com/v1-api-reference/api/operation/Object_POSTProductRatePlanCharge/
+        if not price_change_option:
+            payload_data["PriceChangeOption"] = "SpecificPercentageValue"
             defaults_applied.append(
                 {
-                    "field": "PriceIncreaseOption",
+                    "field": "PriceChangeOption",
                     "value": "SpecificPercentageValue (auto-set because PriceIncreasePercentage was provided)",
                 }
             )
