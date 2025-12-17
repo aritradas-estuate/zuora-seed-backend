@@ -49,6 +49,7 @@ async function zuoraPost(baseUrl, token, path, body) {
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
+      "X-Zuora-WSDL-Version": "141",
     },
     body: JSON.stringify(body),
   });
@@ -103,6 +104,7 @@ async function zuoraRequest(baseUrl, token, method, endpoint, body) {
     method: m,
     headers: {
       Authorization: `Bearer ${token}`,
+      "X-Zuora-WSDL-Version": "141",
     },
   };
 
@@ -181,6 +183,7 @@ async function zuoraDelete(baseUrl, token, objectType, id) {
     method: "DELETE",
     headers: {
       Authorization: `Bearer ${token}`,
+      "X-Zuora-WSDL-Version": "141",
     },
   });
 
