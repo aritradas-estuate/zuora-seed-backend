@@ -26,6 +26,12 @@ from .validation_utils import (
     validate_product_name_unique,
     validate_rate_plan_name_unique,
     validate_charge_name_unique,
+    # PWD validation functions
+    validate_pwd_drawdown_price,
+    validate_pwd_thresholds,
+    apply_pwd_rollover_defaults,
+    check_pwd_uom_compatibility,
+    check_pwd_currency_compatibility,
 )
 
 
@@ -3718,6 +3724,959 @@ When prepaid balance is depleted, you have options:
     tool_context.agent.state.set(ADVISORY_PAYLOADS_STATE_KEY, payloads)
 
     return guide
+
+
+# ============ PWD SeedSpec Tools (Billing Architect) ============
+
+
+@tool(context=True)
+def generate_pwd_seedspec(
+    tool_context: ToolContext,
+    product_name: str,
+    sku: str,
+    uom: str,
+    currencies: List[str],
+    prepaid_plans: List[Dict[str, Any]],
+    topup_packs: Optional[List[Dict[str, Any]]] = None,
+    overage: Optional[Dict[str, Any]] = None,
+    wallet_policy: Optional[Dict[str, Any]] = None,
+    validate_tenant: bool = True,
+) -> str:
+    """
+    Generate a complete PWD SeedSpec with validation (no execution).
+
+    ADVISORY ONLY - generates specification and planning payloads with placeholders.
+    Does NOT create actual Zuora objects.
+
+    Validates against PWD rules:
+    - Drawdown price = 0
+    - Prepay + drawdown in same rate plan
+    - Threshold sanity (auto-topup < monthly load)
+    - UOM enabled in tenant (if validate_tenant=True)
+    - Currencies enabled in tenant (if validate_tenant=True)
+    - Rollover cap defaults applied if missing
+
+    Args:
+        product_name: Name of the wallet product (e.g., "API Credits Wallet")
+        sku: Product SKU (e.g., "API-WALLET-100")
+        uom: Unit of measure for credits (e.g., "api_call")
+        currencies: List of currency codes (e.g., ["USD", "EUR"])
+        prepaid_plans: List of prepaid plan specifications with:
+            - name: Plan name
+            - prepaid_quantity: Units per period
+            - prices: Dict of currency -> price
+            - billing_period: Month, Quarter, Annual (default: Month)
+            - trigger_event: ServiceActivation, ContractEffective (default: ServiceActivation)
+            - wallet_policy: Optional wallet policies dict with:
+                - pooling_type: ACCOUNT or SUBSCRIPTION
+                - rollover_pct: Percentage to roll over (0-100)
+                - rollover_cap: Max units to roll over
+                - rollover_expiry_months: Months until rollover expires
+                - auto_topup_enabled: Enable auto top-up
+                - auto_topup_threshold: Balance threshold to trigger
+                - auto_topup_quantity: Units to add
+                - auto_topup_prices: Price per currency for top-up
+        topup_packs: Optional one-time top-up packs with:
+            - name: Pack name
+            - quantity: Units in pack
+            - prices: Dict of currency -> price
+        overage: Optional overage configuration with:
+            - enabled: Whether overage billing is enabled
+            - prices_per_unit: Dict of currency -> overage price
+            - billing_period: Billing period for overage
+        wallet_policy: Default wallet policy for all plans (overridden by plan-specific)
+        validate_tenant: Whether to check tenant UOM/currency compatibility
+
+    Returns:
+        Validation summary, raw JSON spec, and placeholder map.
+    """
+    from .zuora_settings import get_available_uom_names, get_available_currencies
+
+    errors: List[str] = []
+    warnings: List[str] = []
+    auto_fixes: List[Dict[str, Any]] = []
+    applied_defaults: List[str] = []
+
+    # Step 1: Validate tenant compatibility if requested
+    tenant_uoms: List[str] = []
+    tenant_currencies: List[str] = []
+
+    if validate_tenant:
+        try:
+            tenant_uoms = get_available_uom_names()
+            tenant_currencies = get_available_currencies()
+        except Exception as e:
+            warnings.append(
+                f"Could not fetch tenant settings: {e}. Skipping tenant validation."
+            )
+            validate_tenant = False
+
+    # Step 2: Check UOM compatibility
+    uom_issue = None
+    if validate_tenant and tenant_uoms:
+        uom_ok, uom_issue = check_pwd_uom_compatibility(uom, tenant_uoms)
+        if not uom_ok and uom_issue:
+            auto_fixes.append(uom_issue)
+
+    # Step 3: Check currency compatibility
+    currency_issues: List[Dict[str, Any]] = []
+    if validate_tenant and tenant_currencies:
+        currencies_ok, currency_issues = check_pwd_currency_compatibility(
+            currencies, tenant_currencies
+        )
+        if not currencies_ok:
+            auto_fixes.extend(currency_issues)
+
+    # Step 4: Validate thresholds and apply defaults for each plan
+    for i, plan in enumerate(prepaid_plans):
+        plan_name = plan.get("name", f"Plan {i + 1}")
+        monthly_load = plan.get("prepaid_quantity", 0)
+
+        # Get wallet policy (plan-specific or default)
+        plan_wallet_policy = plan.get("wallet_policy") or wallet_policy or {}
+
+        rollover_pct = plan_wallet_policy.get("rollover_pct")
+        rollover_cap = plan_wallet_policy.get("rollover_cap")
+        auto_topup_threshold = plan_wallet_policy.get("auto_topup_threshold")
+
+        # Apply rollover defaults
+        if rollover_pct is not None:
+            new_cap, default_explanation = apply_pwd_rollover_defaults(
+                monthly_load, rollover_pct, rollover_cap
+            )
+            if default_explanation:
+                applied_defaults.append(f"{plan_name}: {default_explanation}")
+                # Update the plan's wallet policy with calculated cap
+                if "wallet_policy" not in plan:
+                    plan["wallet_policy"] = {}
+                plan["wallet_policy"]["rollover_cap"] = new_cap
+                rollover_cap = new_cap
+
+        # Validate thresholds
+        if plan_wallet_policy.get("auto_topup_enabled"):
+            threshold_ok, threshold_errors, threshold_recs = validate_pwd_thresholds(
+                monthly_load, auto_topup_threshold, rollover_cap, rollover_pct
+            )
+            if not threshold_ok:
+                for err in threshold_errors:
+                    errors.append(f"{plan_name}: {err}")
+            warnings.extend([f"{plan_name}: {rec}" for rec in threshold_recs])
+
+    # Step 5: Build the spec summary
+    is_valid = len(errors) == 0 and len(auto_fixes) == 0
+
+    # Build summary table
+    summary_rows = []
+    for plan in prepaid_plans:
+        plan_name = plan.get("name", "Unnamed Plan")
+        quantity = plan.get("prepaid_quantity", 0)
+        prices = plan.get("prices", {})
+        billing = plan.get("billing_period", "Month")
+        plan_type = "Recurring Prepay" if plan.get("is_recurring", True) else "One-Time"
+
+        price_str = " / ".join(
+            [f"${p:,.0f} {c}" if p >= 1 else f"${p:.4f} {c}" for c, p in prices.items()]
+        )
+        summary_rows.append(
+            f"| {plan_name} | {plan_type} | {quantity:,.0f} {uom} | {price_str} | {billing} |"
+        )
+
+    if topup_packs:
+        for pack in topup_packs:
+            pack_name = pack.get("name", "Top-Up Pack")
+            quantity = pack.get("quantity", 0)
+            prices = pack.get("prices", {})
+            price_str = " / ".join(
+                [
+                    f"${p:,.0f} {c}" if p >= 1 else f"${p:.4f} {c}"
+                    for c, p in prices.items()
+                ]
+            )
+            summary_rows.append(
+                f"| {pack_name} | One-Time | {quantity:,.0f} {uom} | {price_str} | — |"
+            )
+
+    if overage and overage.get("enabled", True):
+        overage_prices = overage.get("prices_per_unit", {})
+        price_str = " / ".join(
+            [f"${p:.4f}/{uom} {c}" for c, p in overage_prices.items()]
+        )
+        overage_billing = overage.get("billing_period", "Month")
+        summary_rows.append(
+            f"| Overage | Usage | Per-unit | {price_str} | {overage_billing} |"
+        )
+
+    summary_table = "\n".join(summary_rows)
+
+    # Build wallet policy summary
+    wallet_policy_summary = ""
+    if prepaid_plans and prepaid_plans[0].get("wallet_policy"):
+        wp = prepaid_plans[0].get("wallet_policy", {})
+        policy_items = []
+
+        pooling = wp.get("pooling_type", "ACCOUNT")
+        pooling_id = wp.get("pooling_id", "POOL-DEFAULT")
+        policy_items.append(f"- Pooling: {pooling}-level ({pooling_id})")
+
+        if wp.get("rollover_pct") is not None:
+            rollover_cap = wp.get("rollover_cap", "unlimited")
+            expiry = wp.get("rollover_expiry_months", 1)
+            cap_str = (
+                f"{rollover_cap:,.0f}"
+                if isinstance(rollover_cap, (int, float))
+                else rollover_cap
+            )
+            policy_items.append(
+                f"- Rollover: {wp.get('rollover_pct')}% capped at {cap_str}, expires after {expiry} month(s)"
+            )
+
+        if wp.get("auto_topup_enabled"):
+            threshold = wp.get("auto_topup_threshold", 0)
+            quantity = wp.get("auto_topup_quantity", 0)
+            policy_items.append(
+                f"- Auto Top-Up: Trigger when balance < {threshold:,.0f} → add {quantity:,.0f}"
+            )
+
+        wallet_policy_summary = "\n".join(policy_items)
+
+    # Build raw JSON spec
+    raw_spec = {
+        "product_name": product_name,
+        "sku": sku,
+        "uom": uom,
+        "currencies": currencies,
+        "prepaid_plans": prepaid_plans,
+    }
+    if topup_packs:
+        raw_spec["topup_packs"] = topup_packs
+    if overage:
+        raw_spec["overage"] = overage
+
+    raw_json = json.dumps(raw_spec, indent=2)
+
+    # Build placeholder map
+    placeholder_map = {
+        "{{PRODUCT_ID}}": f"{product_name} ({sku})",
+    }
+    for i, plan in enumerate(prepaid_plans):
+        plan_name = plan.get("name", f"Plan_{i}")
+        safe_name = plan_name.upper().replace(" ", "_").replace("-", "_")
+        placeholder_map[f"{{{{RP_{safe_name}_ID}}}}"] = f"Rate Plan: {plan_name}"
+        placeholder_map[f"{{{{CHARGE_PREPAY_{safe_name}_ID}}}}"] = (
+            f"Prepaid Charge: {plan_name}"
+        )
+        placeholder_map[f"{{{{CHARGE_DRAWDOWN_{safe_name}_ID}}}}"] = (
+            f"Drawdown Charge: {plan_name}"
+        )
+
+    if topup_packs:
+        for i, pack in enumerate(topup_packs):
+            pack_name = pack.get("name", f"TopUp_{i}")
+            safe_name = pack_name.upper().replace(" ", "_").replace("-", "_")
+            placeholder_map[f"{{{{RP_{safe_name}_ID}}}}"] = f"Rate Plan: {pack_name}"
+            placeholder_map[f"{{{{CHARGE_{safe_name}_ID}}}}"] = f"Charge: {pack_name}"
+
+    if overage and overage.get("enabled", True):
+        placeholder_map["{{CHARGE_OVERAGE_ID}}"] = "Overage Charge"
+
+    placeholder_table = "\n".join(
+        [f"| `{k}` | {v} |" for k, v in placeholder_map.items()]
+    )
+
+    # Store spec in advisory state
+    payloads = tool_context.agent.state.get(ADVISORY_PAYLOADS_STATE_KEY) or []
+    payloads.append(
+        {
+            "type": "pwd_seedspec",
+            "name": product_name,
+            "spec": raw_spec,
+            "placeholder_map": placeholder_map,
+            "validation": {
+                "is_valid": is_valid,
+                "errors": errors,
+                "warnings": warnings,
+                "auto_fixes": auto_fixes,
+                "applied_defaults": applied_defaults,
+            },
+        }
+    )
+    tool_context.agent.state.set(ADVISORY_PAYLOADS_STATE_KEY, payloads)
+
+    # Build output
+    if is_valid:
+        status_icon = "✅"
+        status_text = "PWD SeedSpec Validated"
+    elif auto_fixes:
+        status_icon = "⚠️"
+        status_text = "PWD SeedSpec Has Issues (Auto-Fix Available)"
+    else:
+        status_icon = "❌"
+        status_text = "PWD SeedSpec Validation Failed"
+
+    output = f"""
+## {status_icon} {status_text}
+
+### Summary
+
+| Plan | Type | Quantity | Price | Billing |
+|------|------|----------|-------|---------|
+{summary_table}
+"""
+
+    if wallet_policy_summary:
+        output += f"""
+### Wallet Policies
+
+{wallet_policy_summary}
+"""
+
+    if applied_defaults:
+        output += f"""
+### Applied Defaults
+
+"""
+        for default in applied_defaults:
+            output += f"- ℹ️ {default}\n"
+
+    if errors:
+        output += f"""
+### Errors
+
+"""
+        for error in errors:
+            output += f"- ❌ {error}\n"
+
+    if warnings:
+        output += f"""
+### Warnings
+
+"""
+        for warning in warnings:
+            output += f"- ⚠️ {warning}\n"
+
+    if auto_fixes:
+        output += f"""
+### Tenant Compatibility Issues
+
+The following issues were detected. Please choose how to resolve:
+
+"""
+        for i, fix in enumerate(auto_fixes, 1):
+            field = fix.get("field", "unknown")
+            original = fix.get("original", "")
+            suggestion = fix.get("suggestion")
+            message = fix.get("message", "")
+
+            output += f"**Issue {i}: {field.upper()}**\n"
+            output += f"- {message}\n"
+            if suggestion:
+                output += f"\nOptions:\n"
+                output += f"1. Apply fix: `{original}` → `{suggestion}`\n"
+                output += f"2. Keep original value\n"
+                output += f"3. Specify a different value\n\n"
+            else:
+                output += f"\nOptions:\n"
+                output += f"1. Select from available values\n"
+                output += f"2. Create new {field} in tenant settings\n\n"
+
+    output += f"""
+### Placeholder Map
+
+| Placeholder | Description |
+|-------------|-------------|
+{placeholder_table}
+
+### Raw JSON Spec
+
+```json
+{raw_json}
+```
+
+---
+**Status**: {"PLANNING ONLY — No execution performed" if is_valid else "Fix issues before generating planning payloads"}
+"""
+
+    return output
+
+
+@tool(context=True)
+def validate_pwd_spec(
+    tool_context: ToolContext,
+    spec: Dict[str, Any],
+    check_tenant: bool = True,
+) -> str:
+    """
+    Validate a PWD SeedSpec against Zuora rules.
+
+    Rules checked:
+    1. Drawdown price must be 0 (usage draws from prepaid balance)
+    2. Prepay + drawdown must be in same rate plan
+    3. Auto-topup threshold < monthly load
+    4. UOM must be enabled in tenant (if check_tenant=True)
+    5. Currencies must be enabled (if check_tenant=True)
+    6. Rollover cap <= rollover_pct * monthly_load
+
+    Args:
+        spec: PWDSeedSpec as dictionary with:
+            - product_name: Product name
+            - sku: Product SKU
+            - uom: Unit of measure
+            - currencies: List of currency codes
+            - prepaid_plans: List of prepaid plan specs
+            - topup_packs: Optional top-up packs
+            - overage: Optional overage config
+        check_tenant: Whether to validate against tenant configuration
+
+    Returns:
+        Validation result with errors, warnings, and auto-fix suggestions.
+        If issues found, asks user before applying fixes.
+    """
+    from .zuora_settings import get_available_uom_names, get_available_currencies
+
+    errors: List[str] = []
+    warnings: List[str] = []
+    auto_fixes: List[Dict[str, Any]] = []
+    applied_defaults: List[str] = []
+
+    uom = spec.get("uom", "")
+    currencies = spec.get("currencies", [])
+    prepaid_plans = spec.get("prepaid_plans", [])
+
+    # Tenant validation
+    if check_tenant:
+        try:
+            tenant_uoms = get_available_uom_names()
+            tenant_currencies = get_available_currencies()
+
+            # Check UOM
+            uom_ok, uom_issue = check_pwd_uom_compatibility(uom, tenant_uoms)
+            if not uom_ok and uom_issue:
+                auto_fixes.append(uom_issue)
+
+            # Check currencies
+            currencies_ok, currency_issues = check_pwd_currency_compatibility(
+                currencies, tenant_currencies
+            )
+            if not currencies_ok:
+                auto_fixes.extend(currency_issues)
+
+        except Exception as e:
+            warnings.append(f"Could not fetch tenant settings: {e}")
+
+    # Validate each plan
+    for i, plan in enumerate(prepaid_plans):
+        plan_name = plan.get("name", f"Plan {i + 1}")
+        monthly_load = plan.get("prepaid_quantity", 0)
+        plan_wp = plan.get("wallet_policy", {})
+
+        # Check thresholds
+        if plan_wp.get("auto_topup_enabled"):
+            threshold_ok, threshold_errors, threshold_recs = validate_pwd_thresholds(
+                monthly_load,
+                plan_wp.get("auto_topup_threshold"),
+                plan_wp.get("rollover_cap"),
+                plan_wp.get("rollover_pct"),
+            )
+            if not threshold_ok:
+                errors.extend([f"{plan_name}: {e}" for e in threshold_errors])
+            warnings.extend([f"{plan_name}: {r}" for r in threshold_recs])
+
+        # Check rollover defaults
+        rollover_pct = plan_wp.get("rollover_pct")
+        rollover_cap = plan_wp.get("rollover_cap")
+        if rollover_pct is not None and rollover_cap is None:
+            new_cap, explanation = apply_pwd_rollover_defaults(
+                monthly_load, rollover_pct, rollover_cap
+            )
+            if explanation:
+                applied_defaults.append(f"{plan_name}: {explanation}")
+
+    # Validate drawdown price = 0 rule (informational)
+    price_ok, price_msg = validate_pwd_drawdown_price(0)  # Always check for $0
+    if not price_ok:
+        warnings.append(price_msg)
+
+    # Build result
+    is_valid = len(errors) == 0 and len(auto_fixes) == 0
+
+    if is_valid:
+        status = "✅ Validation Passed"
+    elif auto_fixes:
+        status = "⚠️ Validation Issues (Fixable)"
+    else:
+        status = "❌ Validation Failed"
+
+    output = f"## {status}\n\n"
+
+    if errors:
+        output += "### Errors\n\n"
+        for e in errors:
+            output += f"- ❌ {e}\n"
+        output += "\n"
+
+    if warnings:
+        output += "### Warnings\n\n"
+        for w in warnings:
+            output += f"- ⚠️ {w}\n"
+        output += "\n"
+
+    if auto_fixes:
+        output += "### Tenant Issues (Require Action)\n\n"
+        for i, fix in enumerate(auto_fixes, 1):
+            output += (
+                f"**{i}. {fix.get('field', '').upper()}**: {fix.get('message', '')}\n"
+            )
+            if fix.get("suggestion"):
+                output += f"   - Suggested fix: `{fix.get('original')}` → `{fix.get('suggestion')}`\n"
+        output += "\n"
+
+    if applied_defaults:
+        output += "### Applied Defaults\n\n"
+        for d in applied_defaults:
+            output += f"- ℹ️ {d}\n"
+        output += "\n"
+
+    if is_valid:
+        output += "**Ready to generate planning payloads.** Use `generate_pwd_planning_payloads()` to create advisory JSON.\n"
+
+    return output
+
+
+@tool(context=True)
+def generate_pwd_planning_payloads(
+    tool_context: ToolContext,
+    spec: Optional[Dict[str, Any]] = None,
+    include_order_example: bool = True,
+) -> str:
+    """
+    Generate planning payloads with placeholder IDs (no execution).
+
+    Creates advisory JSON payloads for:
+    - Product with {{PRODUCT_ID}}
+    - Rate Plans with {{RP_*_ID}}
+    - Charges with {{CHARGE_PREPAY_ID}}, {{CHARGE_DRAWDOWN_ID}}, {{CHARGE_OVERAGE_ID}}
+    - Optional example Order payload for subscription creation
+
+    Args:
+        spec: PWDSeedSpec as dictionary. If None, uses the last spec from advisory state.
+        include_order_example: Whether to include sample order JSON
+
+    Returns:
+        Planning payloads with placeholder map and JSON output.
+        Does NOT add to execution queue - this is advisory only.
+    """
+    # Get spec from state if not provided
+    if spec is None:
+        payloads = tool_context.agent.state.get(ADVISORY_PAYLOADS_STATE_KEY) or []
+        pwd_specs = [p for p in payloads if p.get("type") == "pwd_seedspec"]
+        if not pwd_specs:
+            return (
+                "❌ No PWD SeedSpec found. Please run `generate_pwd_seedspec()` first."
+            )
+        spec = pwd_specs[-1].get("spec", {})
+        placeholder_map = pwd_specs[-1].get("placeholder_map", {})
+    else:
+        placeholder_map = {}
+
+    product_name = spec.get("product_name", "API Credits Wallet")
+    sku = spec.get("sku", "API-WALLET-100")
+    uom = spec.get("uom", "api_call")
+    currencies = spec.get("currencies", ["USD"])
+    prepaid_plans = spec.get("prepaid_plans", [])
+    topup_packs = spec.get("topup_packs", [])
+    overage = spec.get("overage", {})
+
+    # Build Product payload
+    product_payload = {
+        "Name": product_name,
+        "SKU": sku,
+        "Description": spec.get(
+            "description", f"Prepaid wallet product for {uom} credits"
+        ),
+        "EffectiveStartDate": "{{EFFECTIVE_START_DATE}}",
+        "EffectiveEndDate": "{{EFFECTIVE_END_DATE}}",
+    }
+
+    # Build Rate Plan and Charge payloads
+    rate_plan_payloads = []
+    charge_payloads = []
+
+    for i, plan in enumerate(prepaid_plans):
+        plan_name = plan.get("name", f"Plan {i + 1}")
+        safe_name = plan_name.upper().replace(" ", "_").replace("-", "_")
+        quantity = plan.get("prepaid_quantity", 0)
+        prices = plan.get("prices", {})
+        billing_period = plan.get("billing_period", "Month")
+        trigger_event = plan.get("trigger_event", "ServiceActivation")
+        wp = plan.get("wallet_policy", {})
+
+        # Rate Plan
+        rp_payload = {
+            "Name": plan_name,
+            "ProductId": "{{PRODUCT_ID}}",
+            "Description": f"Prepaid plan: {quantity:,.0f} {uom} per {billing_period.lower()}",
+        }
+        rate_plan_payloads.append(
+            {"placeholder": f"{{{{RP_{safe_name}_ID}}}}", "payload": rp_payload}
+        )
+
+        # Prepaid Charge
+        prepaid_tiers = [{"Currency": c, "Price": p} for c, p in prices.items()]
+        prepaid_charge = {
+            "Name": f"{plan_name} - Prepaid",
+            "ProductRatePlanId": f"{{{{RP_{safe_name}_ID}}}}",
+            "ChargeType": "Recurring",
+            "ChargeModel": "Flat Fee Pricing",
+            "ChargeFunction": "Prepayment",
+            "BillingPeriod": billing_period,
+            "BillingTiming": "In Advance",
+            "BillCycleType": "DefaultFromCustomer",
+            "TriggerEvent": trigger_event,
+            "IsPrepaid": True,
+            "PrepaidOperationType": "topup",
+            "PrepaidQuantity": quantity,
+            "PrepaidUom": uom,
+            "CommitmentType": "UNIT",
+            "ValidityPeriodType": "MONTH",
+            "CreditOption": "ConsumptionBased",
+            "ProductRatePlanChargeTierData": {
+                "ProductRatePlanChargeTier": prepaid_tiers
+            },
+        }
+
+        # Add rollover config if present
+        if wp.get("rollover_pct") is not None:
+            prepaid_charge["IsRollover"] = True
+            prepaid_charge["RolloverPeriods"] = min(
+                wp.get("rollover_expiry_months", 1), 3
+            )
+            prepaid_charge["RolloverApply"] = "ApplyFirst"
+
+        charge_payloads.append(
+            {
+                "placeholder": f"{{{{CHARGE_PREPAY_{safe_name}_ID}}}}",
+                "payload": prepaid_charge,
+            }
+        )
+
+        # Drawdown Charge (price = $0)
+        drawdown_tiers = [{"Currency": c, "Price": 0} for c in currencies]
+        drawdown_charge = {
+            "Name": f"{plan_name} - Drawdown",
+            "ProductRatePlanId": f"{{{{RP_{safe_name}_ID}}}}",
+            "ChargeType": "Usage",
+            "ChargeModel": "Per Unit Pricing",
+            "ChargeFunction": "Drawdown",
+            "BillingPeriod": billing_period,
+            "BillCycleType": "DefaultFromCustomer",
+            "TriggerEvent": trigger_event,
+            "IsPrepaid": True,
+            "PrepaidOperationType": "drawdown",
+            "UOM": uom,
+            "DrawdownUom": uom,
+            "RatingGroup": "ByBillingPeriod",
+            "ProductRatePlanChargeTierData": {
+                "ProductRatePlanChargeTier": drawdown_tiers
+            },
+        }
+        charge_payloads.append(
+            {
+                "placeholder": f"{{{{CHARGE_DRAWDOWN_{safe_name}_ID}}}}",
+                "payload": drawdown_charge,
+            }
+        )
+
+    # Top-up packs
+    for i, pack in enumerate(topup_packs or []):
+        pack_name = pack.get("name", f"Top-Up Pack {i + 1}")
+        safe_name = pack_name.upper().replace(" ", "_").replace("-", "_")
+        quantity = pack.get("quantity", 0)
+        prices = pack.get("prices", {})
+
+        rp_payload = {
+            "Name": pack_name,
+            "ProductId": "{{PRODUCT_ID}}",
+            "Description": f"One-time top-up: {quantity:,.0f} {uom}",
+        }
+        rate_plan_payloads.append(
+            {"placeholder": f"{{{{RP_{safe_name}_ID}}}}", "payload": rp_payload}
+        )
+
+        topup_tiers = [{"Currency": c, "Price": p} for c, p in prices.items()]
+        topup_charge = {
+            "Name": pack_name,
+            "ProductRatePlanId": f"{{{{RP_{safe_name}_ID}}}}",
+            "ChargeType": "OneTime",
+            "ChargeModel": "Flat Fee Pricing",
+            "ChargeFunction": "Prepayment",
+            "BillCycleType": "DefaultFromCustomer",
+            "TriggerEvent": "ContractEffective",
+            "IsPrepaid": True,
+            "PrepaidOperationType": "topup",
+            "PrepaidQuantity": quantity,
+            "PrepaidUom": uom,
+            "CommitmentType": "UNIT",
+            "ProductRatePlanChargeTierData": {"ProductRatePlanChargeTier": topup_tiers},
+        }
+        charge_payloads.append(
+            {"placeholder": f"{{{{CHARGE_{safe_name}_ID}}}}", "payload": topup_charge}
+        )
+
+    # Overage charge (if enabled)
+    if overage and overage.get("enabled", True):
+        overage_prices = overage.get("prices_per_unit", {})
+        overage_billing = overage.get("billing_period", "Month")
+
+        # Add to first prepaid plan's rate plan
+        if prepaid_plans:
+            first_plan = prepaid_plans[0].get("name", "Plan 1")
+            safe_name = first_plan.upper().replace(" ", "_").replace("-", "_")
+            rp_ref = f"{{{{RP_{safe_name}_ID}}}}"
+        else:
+            rp_ref = "{{RP_OVERAGE_ID}}"
+
+        overage_tiers = [{"Currency": c, "Price": p} for c, p in overage_prices.items()]
+        overage_charge = {
+            "Name": "Overage Usage",
+            "Description": "Overage billing when prepaid balance exhausted and auto top-up OFF",
+            "ProductRatePlanId": rp_ref,
+            "ChargeType": "Usage",
+            "ChargeModel": "Per Unit Pricing",
+            "ChargeFunction": "Standard",  # NOT Drawdown - standard usage charge
+            "BillingPeriod": overage_billing,
+            "BillCycleType": "DefaultFromCustomer",
+            "TriggerEvent": "ContractEffective",
+            "UOM": uom,
+            "RatingGroup": "ByBillingPeriod",
+            "ProductRatePlanChargeTierData": {
+                "ProductRatePlanChargeTier": overage_tiers
+            },
+        }
+        charge_payloads.append(
+            {"placeholder": "{{CHARGE_OVERAGE_ID}}", "payload": overage_charge}
+        )
+
+    # Build Order example if requested
+    order_example = None
+    if include_order_example and prepaid_plans:
+        first_plan = prepaid_plans[0].get("name", "Plan 1")
+        safe_name = first_plan.upper().replace(" ", "_").replace("-", "_")
+
+        order_example = {
+            "orderDate": "{{ORDER_DATE}}",
+            "existingAccountNumber": "{{ACCOUNT_NUMBER}}",
+            "description": f"Subscribe to {product_name}",
+            "subscriptions": [
+                {
+                    "orderActions": [
+                        {
+                            "type": "CreateSubscription",
+                            "createSubscription": {
+                                "terms": {
+                                    "initialTerm": {
+                                        "termType": "TERMED",
+                                        "period": 12,
+                                        "periodType": "Month",
+                                    },
+                                    "renewalSetting": "RENEW_WITH_SPECIFIC_TERM",
+                                    "renewalTerms": [
+                                        {"period": 12, "periodType": "Month"}
+                                    ],
+                                },
+                                "subscribeToRatePlans": [
+                                    {"productRatePlanId": f"{{{{RP_{safe_name}_ID}}}}"}
+                                ],
+                            },
+                        }
+                    ]
+                }
+            ],
+        }
+
+    # Build placeholder map table
+    all_placeholders = {"{{PRODUCT_ID}}": f"{product_name} ({sku})"}
+    for rp in rate_plan_payloads:
+        all_placeholders[rp["placeholder"]] = f"Rate Plan: {rp['payload']['Name']}"
+    for ch in charge_payloads:
+        all_placeholders[ch["placeholder"]] = f"Charge: {ch['payload']['Name']}"
+
+    placeholder_table = "\n".join(
+        [f"| `{k}` | {v} |" for k, v in all_placeholders.items()]
+    )
+
+    # Build output
+    output = f"""
+## 📦 Planning Payloads Generated
+
+### Placeholder Map
+
+| Placeholder | Description |
+|-------------|-------------|
+{placeholder_table}
+
+---
+
+### Product Payload
+
+```json
+{json.dumps(product_payload, indent=2)}
+```
+
+### Rate Plan Payloads
+
+"""
+    for rp in rate_plan_payloads:
+        output += f"**{rp['placeholder']}**\n```json\n{json.dumps(rp['payload'], indent=2)}\n```\n\n"
+
+    output += "### Charge Payloads\n\n"
+    for ch in charge_payloads:
+        output += f"**{ch['placeholder']}**\n```json\n{json.dumps(ch['payload'], indent=2)}\n```\n\n"
+
+    if order_example:
+        output += f"""### Example Order (Subscription Creation)
+
+```json
+{json.dumps(order_example, indent=2)}
+```
+
+"""
+
+    output += """---
+**Status**: PLANNING ONLY — No execution performed
+
+To execute these payloads, use the Product Manager persona with `create_product()`, `create_rate_plan()`, and `create_charge()` tools.
+"""
+
+    return output
+
+
+@tool(context=True)
+def get_pwd_knowledge_base(tool_context: ToolContext) -> str:
+    """
+    Get Zuora Prepaid with Drawdown best practices and KB links.
+
+    Returns comprehensive advisory guide covering:
+    - How the wallet is represented (prepaid + drawdown charges)
+    - Why drawdown price is $0
+    - Rollover, top-up, overage modeling patterns
+    - Why charge model changes are blocked post go-live
+    - 2-3 relevant Knowledge Center links
+    - 6-bullet implementation checklist
+
+    Returns:
+        Formatted advisory guide with KB links and checklist.
+    """
+    kb_content = """
+## Zuora Prepaid with Drawdown (PWD) — Best Practices
+
+### How the Wallet is Represented
+
+| Component | Charge Type | ChargeFunction | Purpose |
+|-----------|-------------|----------------|---------|
+| **Prepaid (Top-Up)** | Recurring | `Prepayment` | Creates the wallet balance |
+| **Drawdown** | Usage | `Drawdown` | Consumes from wallet |
+| **Overage** | Usage | `Standard` | Bills when wallet = 0 |
+
+Both prepaid and drawdown charges must be in the **same rate plan**.
+Balance is tracked at account or subscription level via `CommitmentType`:
+- `UNIT`: Track units (API calls, credits, etc.)
+- `CURRENCY`: Track monetary value
+
+---
+
+### Why Drawdown Price = $0
+
+- Customer has **already paid** via the Prepaid charge
+- Drawdown is "free" usage against pre-purchased credits
+- Price = $0 ensures **no double-billing**
+- Overage pricing applies **only after** balance exhausted
+- The `ChargeFunction: Drawdown` tells Zuora to deduct from prepaid balance
+
+---
+
+### Modeling Patterns
+
+#### Rollover Configuration
+```json
+{
+  "IsRollover": true,
+  "RolloverPeriods": 2,           // Max 3 per Zuora
+  "RolloverApply": "ApplyFirst",  // Use old credits first
+  "RolloverPeriodLength": null    // Optional: custom period
+}
+```
+
+**RolloverApply options:**
+- `ApplyFirst`: Use rolled-over credits before new credits (recommended)
+- `ApplyLast`: Use new credits first, rollover as backup
+
+#### Auto Top-Up (via Workflow)
+- Triggered when `PrepaidBalance < threshold`
+- Creates Order with `AddProduct` action for top-up rate plan
+- Use `fieldLookup('Account.TopUpAmount__c')` for dynamic amounts
+- Threshold should be 10-20% of monthly load (not higher)
+
+#### Overage Handling
+- **Separate Usage charge** in same rate plan
+- `ChargeFunction = "Standard"` (NOT Drawdown)
+- Standard per-unit pricing (e.g., $0.007/unit)
+- Only billed when auto top-up is OFF and balance = 0
+
+---
+
+### Why Charge Model Changes Are Blocked Post Go-Live
+
+1. **Active subscriptions reference the charge** - changing model breaks billing
+2. **Historical data integrity** - past invoices tied to original model
+3. **Revenue recognition** - model changes affect deferred revenue
+4. **Zuora enforces immutability** for data consistency
+
+**Solution**: Create new rate plan version, migrate subscribers via Orders API
+
+---
+
+### Knowledge Center Links
+
+1. **[Prepaid with Drawdown Overview](https://knowledgecenter.zuora.com/Zuora_Billing/Build_products_and_prices/Prepaid_with_Drawdown)**
+   Complete guide to PWD feature configuration
+
+2. **[Create Prepayment Charge](https://knowledgecenter.zuora.com/Zuora_Billing/Bill_your_customers/Bill_for_usage_or_prepaid_products/Advanced_Consumption_Billing/Prepaid_with_Drawdown/Create_prepayment_charge)**
+   Detailed setup for the top-up charge
+
+3. **[Create Drawdown Charge](https://knowledgecenter.zuora.com/Zuora_Billing/Bill_your_customers/Bill_for_usage_or_prepaid_products/Advanced_Consumption_Billing/Prepaid_with_Drawdown/Create_drawdown_charge)**
+   Configuring the usage drawdown charge
+
+---
+
+### Implementation Checklist
+
+1. ☐ **Enable PWD feature** in tenant settings
+   - Settings > Billing > Prepaid with Drawdown > Enable
+
+2. ☐ **Create/verify UOM** for prepaid units
+   - Settings > Units of Measure > Add (e.g., "api_call", "credit")
+
+3. ☐ **Create Product** with rate plan containing:
+   - Prepaid charge (ChargeFunction: Prepayment)
+   - Drawdown charge (ChargeFunction: Drawdown, Price: $0)
+   - Both in SAME rate plan
+
+4. ☐ **Configure wallet policy**:
+   - CommitmentType: UNIT or CURRENCY
+   - ValidityPeriodType: MONTH, QUARTER, ANNUAL, or SUBSCRIPTION_TERM
+   - Rollover settings if needed
+
+5. ☐ **Set up auto top-up workflow** (if required):
+   - Event trigger: PrepaidBalanceLow or custom event
+   - Action: Create Order with AddProduct for top-up pack
+
+6. ☐ **Test end-to-end**:
+   - Create subscription with prepaid plan
+   - Upload usage records
+   - Verify drawdown from balance
+   - Run billing to generate invoice
+"""
+    return kb_content
 
 
 @tool(context=True)
