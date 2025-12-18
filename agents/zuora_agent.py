@@ -682,7 +682,7 @@ def create_agent(persona: str) -> Agent:
             model_id=GEN_MODEL_ID,
             streaming=False,  # Frontend cannot handle streaming
             temperature=0.1,  # Lower temperature = more deterministic, faster
-            max_tokens=2000,  # Reasonable limit for responses
+            max_tokens=4096,  # Increased to handle complex advisory responses
             top_p=0.9,  # More focused token sampling
         )
 
@@ -732,7 +732,7 @@ def get_default_agent() -> Agent:
             model_id=GEN_MODEL_ID,
             streaming=False,  # Frontend cannot handle streaming
             temperature=0.1,  # Lower temperature = more deterministic, faster
-            max_tokens=2000,  # Reasonable limit for responses
+            max_tokens=4096,  # Increased to handle complex advisory responses
             top_p=0.9,  # More focused token sampling
         )
         _default_agent = Agent(
