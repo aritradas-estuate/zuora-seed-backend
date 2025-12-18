@@ -207,6 +207,100 @@ def _resolve_field_path_for_update_payload(
     return field_path
 
 
+def _resolve_currency_price_update(
+    payload: Dict[str, Any],
+    field_path: str,
+    new_value: Any,
+) -> Tuple[bool, Optional[str], Optional[str]]:
+    """
+    Handle currency-specific price updates for charge_create payloads.
+
+    When the agent tries to update 'prices.EUR' or 'overage_prices.USD', this
+    function redirects the update to the actual tier in ProductRatePlanChargeTierData.
+
+    Zuora's API uses ProductRatePlanChargeTierData.ProductRatePlanChargeTier array
+    with {Currency, Price} objects. There is no 'prices' field in the API - that's
+    just an input parameter used during charge creation.
+
+    Args:
+        payload: The charge_create payload dict
+        field_path: Original field path from user/agent (e.g., "prices.EUR", "overage_prices.USD")
+        new_value: New price value
+
+    Returns:
+        Tuple of (was_handled: bool, currency_code: Optional[str], error_msg: Optional[str])
+        - was_handled: True if this was a currency price update pattern
+        - currency_code: The currency that was updated (e.g., "EUR")
+        - error_msg: Error message if currency not found, None on success
+    """
+    field_lower = field_path.lower()
+
+    # Check if this is a prices.{CURRENCY} or overage_prices.{CURRENCY} pattern
+    is_price_pattern = field_lower.startswith("prices.")
+    is_overage_pattern = field_lower.startswith("overage_prices.")
+
+    if not is_price_pattern and not is_overage_pattern:
+        return False, None, None
+
+    parts = field_path.split(".")
+    if len(parts) != 2:
+        return False, None, None
+
+    currency = parts[1].upper()
+
+    # Find the tier data structure
+    tier_data = payload.get("ProductRatePlanChargeTierData", {})
+    tiers = tier_data.get("ProductRatePlanChargeTier", [])
+
+    if not tiers:
+        # No tier data exists yet - cannot update
+        return (
+            True,
+            None,
+            f"No pricing tiers found in payload. Cannot update {currency} price.",
+        )
+
+    # Find the tier with matching currency
+    tier_found = False
+    for tier in tiers:
+        if tier.get("Currency", "").upper() == currency:
+            tier["Price"] = new_value
+            tier_found = True
+            break
+
+    if tier_found:
+        logger.info(
+            f"Updated {currency} price to {new_value} in ProductRatePlanChargeTierData"
+        )
+        return True, currency, None
+
+    # Currency not found - add a new tier for this currency
+    available_currencies = [t.get("Currency", "?") for t in tiers]
+    logger.info(
+        f"Currency '{currency}' not found in existing tiers {available_currencies}. "
+        f"Adding new tier for {currency}."
+    )
+
+    # Create new tier with the currency and price
+    # Copy structure from existing tier if available (for consistency)
+    new_tier: Dict[str, Any] = {"Currency": currency, "Price": new_value}
+
+    # If existing tiers have additional fields (like Tier, StartingUnit), copy the structure
+    if tiers:
+        sample_tier = tiers[0]
+        if "Tier" in sample_tier:
+            new_tier["Tier"] = len(tiers) + 1
+        if "StartingUnit" in sample_tier:
+            new_tier["StartingUnit"] = sample_tier.get("StartingUnit", 1)
+        if "PriceFormat" in sample_tier:
+            new_tier["PriceFormat"] = sample_tier.get("PriceFormat")
+
+    tiers.append(new_tier)
+    logger.info(f"Added new tier for {currency}: {new_tier}")
+
+    return True, currency, None
+
+
 def _find_payload_by_name(
     matching: List[Tuple[int, Dict[str, Any]]], name: str
 ) -> Tuple[Optional[Tuple[int, Dict[str, Any]]], List[str]]:
@@ -596,6 +690,42 @@ def update_payload(
     # This fixes the issue where agent calls update_payload(field_path="EffectiveEndDate")
     # but the field actually lives at payload.body.EffectiveEndDate
     field_path = _resolve_field_path_for_update_payload(payload, field_path)
+
+    # SPECIAL HANDLING: Currency-specific price updates for charge_create payloads
+    # Detects patterns like "prices.EUR" or "overage_prices.USD" and updates the actual
+    # tier in ProductRatePlanChargeTierData instead of creating a spurious "prices" field.
+    # Zuora API only uses ProductRatePlanChargeTierData - there is no "prices" field.
+    if api_type.lower() == "charge_create":
+        was_handled, currency, error_msg = _resolve_currency_price_update(
+            payload, field_path, new_value
+        )
+        if was_handled:
+            if error_msg:
+                # Currency not found or other error
+                return format_error_message("Price update failed", error_msg)
+
+            # Success - update state and return
+            tool_context.agent.state.set(PAYLOADS_STATE_KEY, payloads)
+
+            friendly_type = (
+                api_type.replace("_create", "").replace("_update", "").replace("_", " ")
+            )
+            payload_name = payload.get("Name", payload.get("name", "unnamed"))
+
+            response = f'Updated {currency} price to {new_value} in {friendly_type} "{payload_name}".\n\n'
+            response += f"(Updated ProductRatePlanChargeTierData.ProductRatePlanChargeTier for {currency})\n\n"
+
+            if payload_entry.get("_placeholders"):
+                remaining = payload_entry["_placeholders"]
+                response += f"Still needs: {', '.join(remaining)}"
+            else:
+                response += "All fields complete - ready to execute."
+
+            logger.info(
+                f"[TOOL DONE] update_payload: successfully updated {currency} price to {new_value} "
+                f"in charge '{payload_name}'"
+            )
+            return response
 
     # Navigate to the field using dot notation
     parts = field_path.split(".")
