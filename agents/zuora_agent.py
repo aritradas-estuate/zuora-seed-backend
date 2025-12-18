@@ -34,6 +34,7 @@ from .tools import (
     update_zuora_product,
     update_zuora_rate_plan,
     update_zuora_charge,
+    update_zuora_charge_price,
     # Zuora API tools (expire - payload generation)
     expire_product,
     # Billing Architect advisory tools
@@ -623,6 +624,7 @@ PROJECT_MANAGER_TOOLS = [
     update_zuora_product,
     update_zuora_rate_plan,
     update_zuora_charge,
+    update_zuora_charge_price,
     # Expire operations (payload generation)
     expire_product,
     # Payload manipulation

@@ -655,6 +655,7 @@ class ZuoraApiType(str, Enum):
     PRODUCT_UPDATE = "product_update"
     RATE_PLAN_UPDATE = "rate_plan_update"
     CHARGE_UPDATE = "charge_update"
+    CHARGE_TIER_UPDATE = "charge_tier_update"
 
 
 class ZuoraApiPayload(BaseModel):

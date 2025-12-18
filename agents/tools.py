@@ -1113,7 +1113,10 @@ def get_zuora_rate_plan_details(
                 if pricing:
                     output += "      Pricing:\n"
                     for price in pricing:
-                        output += f"        - {price.get('currency', 'N/A')}: {price.get('price', 'N/A')}\n"
+                        tier_id = price.get("id", "")
+                        tier_num = price.get("tier", 1)
+                        tier_id_str = f" (tier_id: {tier_id})" if tier_id else ""
+                        output += f"        - Tier {tier_num}: {price.get('currency', 'N/A')} {price.get('price', 'N/A')}{tier_id_str}\n"
 
         output += "\n"
 
@@ -1200,6 +1203,27 @@ def update_zuora_charge(
     tool_context: ToolContext, charge_id: str, attribute: str, new_value: Any
 ) -> str:
     """Generate payload to update charge attribute."""
+    # Check for price-related attributes - guide user to dedicated function
+    price_attrs = ["price", "pricing", "tier", "tiers", "productrateplanchargetierdata"]
+    if attribute.lower() in price_attrs:
+        return f"""⚠️ **Price updates require the dedicated tool**
+
+To update charge prices, use `update_zuora_charge_price`:
+
+```
+update_zuora_charge_price(
+    charge_id="{charge_id}",
+    new_price=<new_price_value>,
+    currency="USD",
+    tier=1  # optional: for tiered/volume pricing
+)
+```
+
+This fetches the charge's pricing tiers and generates the correct API payload
+for the tier-specific endpoint (`/v1/object/product-rate-plan-charge-tier/{{tier_id}}`).
+
+Use `get_zuora_product` or `get_zuora_rate_plan_details` to see current pricing and tier IDs."""
+
     # Check for restricted attributes
     restricted_attrs = ["model", "type", "chargeModel", "chargeType"]
     if attribute.lower() in [a.lower() for a in restricted_attrs]:
@@ -1236,6 +1260,209 @@ This payload has been added to the response. Execute it via the Zuora API to app
 
 ⚠️ Note: Updates only affect NEW subscriptions. Existing subscriptions keep the old values.
 ⚠️ Note: Charge Model and Charge Type CANNOT be changed if used in existing subscriptions."""
+
+
+@tool(context=True)
+def update_zuora_charge_price(
+    tool_context: ToolContext,
+    charge_id: str,
+    new_price: float,
+    currency: str,
+    tier: Optional[int] = None,
+) -> str:
+    """Update the price of an existing product rate plan charge tier.
+
+    This tool fetches the charge's pricing tiers and generates the correct
+    update payload for the Zuora tier-specific API endpoint.
+
+    IMPORTANT: Call get_zuora_product or get_zuora_rate_plan_details first to
+    identify the charge_id and see the current pricing structure.
+
+    Args:
+        charge_id: Zuora Product Rate Plan Charge ID (e.g., '8a8080...')
+        new_price: New price value (e.g., 99.00)
+        currency: Currency code (e.g., 'USD') - required
+        tier: Tier number (1-based) for tiered/volume pricing. Required if charge
+              has multiple tiers for the specified currency.
+
+    Returns:
+        Summary of generated update payload(s), or tier selection prompt if needed
+
+    Note:
+        Updates only affect NEW subscriptions. Existing subscriptions keep old values.
+
+    Examples:
+        # Update a flat fee charge price
+        update_zuora_charge_price(charge_id="8a80...", new_price=149.00, currency="USD")
+
+        # Update a specific tier in tiered pricing
+        update_zuora_charge_price(charge_id="8a80...", new_price=0.05, currency="USD", tier=2)
+    """
+    logger.info(
+        f"[TOOL CALL] update_zuora_charge_price: charge_id={charge_id}, "
+        f"new_price={new_price}, currency={currency}, tier={tier}"
+    )
+
+    # Validate charge_id format
+    if not validate_zuora_id(charge_id):
+        return format_error_message(
+            "Invalid charge_id",
+            "Provide a valid Zuora Product Rate Plan Charge ID (e.g., '8a8080...'). "
+            "Use get_zuora_product or get_zuora_rate_plan_details to find the charge ID.",
+        )
+
+    # Validate price is non-negative
+    if new_price < 0:
+        return format_error_message(
+            "Invalid price",
+            "Price must be a non-negative number. Provide a value >= 0.",
+        )
+
+    client = get_zuora_client()
+
+    # 1. Fetch charge details to get tier info
+    result = client.get_charge(charge_id)
+    if not result.get("success"):
+        error_msg = result.get("error", "Unknown error")
+        details = result.get("details", {})
+        if details:
+            error_msg += f" - {details}"
+        return f"❌ **Error retrieving charge:** {error_msg}\n\nPlease verify the charge ID is correct."
+
+    charge_data = result.get("data", {})
+    pricing_tiers = charge_data.get("pricing", [])
+    charge_name = charge_data.get("name", "Unknown")
+    charge_model = charge_data.get("model", "Unknown")
+
+    if not pricing_tiers:
+        return f"""❌ **No pricing tiers found for charge '{charge_name}'**
+
+This charge may not have pricing data available through the API, or the charge model
+does not use standard tier-based pricing.
+
+**Charge ID:** `{charge_id}`
+**Charge Model:** {charge_model}
+
+Please verify this is the correct charge and that it uses a supported pricing model."""
+
+    # 2. Filter tiers by currency
+    currency_upper = currency.upper()
+    matching_tiers = [
+        t for t in pricing_tiers if t.get("currency", "").upper() == currency_upper
+    ]
+
+    if not matching_tiers:
+        available = ", ".join(
+            sorted(set(t.get("currency", "N/A") for t in pricing_tiers))
+        )
+        return f"""❌ **No tier found for currency '{currency}'**
+
+**Charge:** {charge_name}
+**Available currencies:** {available}
+
+Please specify one of the available currencies."""
+
+    # 3. Handle tiered pricing - if multiple tiers and tier not specified, ask user
+    if len(matching_tiers) > 1 and tier is None:
+        output = f"## Multiple Tiers Found for {currency}\n\n"
+        output += f"**Charge:** {charge_name}\n"
+        output += f"**Charge ID:** `{charge_id}`\n"
+        output += f"**Charge Model:** {charge_model}\n\n"
+        output += "| Tier | Current Price | Starting Unit | Ending Unit |\n"
+        output += "|------|---------------|---------------|-------------|\n"
+        for t in sorted(matching_tiers, key=lambda x: x.get("tier", 0)):
+            tier_num = t.get("tier", "?")
+            price = t.get("price", "N/A")
+            start = t.get("startingUnit", "N/A")
+            end = t.get("endingUnit")
+            end_str = "unlimited" if end is None else end
+            output += f"| {tier_num} | {price} | {start} | {end_str} |\n"
+
+        output += "\n---\n\n"
+        output += "**Which tier(s) would you like to update?**\n\n"
+        output += f'- To update a single tier, call: `update_zuora_charge_price(charge_id="{charge_id}", new_price={new_price}, currency="{currency}", tier=<tier_number>)`\n'
+        output += "- Or tell me which tier(s) you want to update and I'll generate the payloads.\n"
+        return output
+
+    # 4. Filter by tier number if specified
+    if tier is not None:
+        tier_match = [t for t in matching_tiers if t.get("tier") == tier]
+        if not tier_match:
+            available = ", ".join(
+                str(t.get("tier", "?"))
+                for t in sorted(matching_tiers, key=lambda x: x.get("tier", 0))
+            )
+            return f"""❌ **No tier #{tier} found for {currency}**
+
+**Charge:** {charge_name}
+**Available tiers for {currency}:** {available}
+
+Please specify one of the available tier numbers."""
+        matching_tiers = tier_match
+
+    # 5. Generate update payloads
+    payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
+    updates_generated = []
+
+    for tier_data in matching_tiers:
+        tier_id = tier_data.get("id")
+        if not tier_id:
+            logger.warning(f"Tier missing ID: {tier_data}")
+            continue
+
+        tier_num = tier_data.get("tier", 1)
+        old_price = tier_data.get("price", "N/A")
+
+        update_payload = {
+            "payload": {
+                "method": "PUT",
+                "endpoint": f"/v1/object/product-rate-plan-charge-tier/{tier_id}",
+                "body": {"Price": new_price},
+            },
+            "zuora_api_type": ZuoraApiType.CHARGE_TIER_UPDATE.value,
+            "payload_id": str(uuid.uuid4())[:8],
+        }
+
+        payloads.append(update_payload)
+        updates_generated.append(
+            {
+                "tier_id": tier_id,
+                "tier": tier_num,
+                "old_price": old_price,
+                "new_price": new_price,
+            }
+        )
+
+    tool_context.agent.state.set(PAYLOADS_STATE_KEY, payloads)
+
+    # 6. Format response
+    if not updates_generated:
+        return """❌ **Could not generate price update payloads**
+
+The tier data from Zuora did not include tier IDs, which are required to update prices.
+This may indicate an API limitation or an issue with the charge configuration.
+
+Please try using the Zuora UI to update this charge's price, or contact support."""
+
+    output = f"## ✅ Price Update Payload Generated\n\n"
+    output += f"**Charge:** {charge_name}\n"
+    output += f"**Charge ID:** `{charge_id}`\n"
+    output += f"**Charge Model:** {charge_model}\n"
+    output += f"**Currency:** {currency}\n\n"
+
+    output += "| Tier | Old Price | New Price | Tier ID |\n"
+    output += "|------|-----------|-----------|--------|\n"
+    for u in updates_generated:
+        tier_id = u["tier_id"]
+        tier_id_display = f"{tier_id[:12]}..." if len(tier_id) > 12 else tier_id
+        output += f"| {u['tier']} | {u['old_price']} | {u['new_price']} | `{tier_id_display}` |\n"
+
+    output += f"\n**Payloads Generated:** {len(updates_generated)}\n\n"
+    output += "---\n\n"
+    output += "The payload has been added to the response. **Send to Zuora** to apply the update.\n\n"
+    output += "⚠️ **Note:** Updates only affect NEW subscriptions. Existing subscriptions keep the old values.\n"
+
+    return output
 
 
 # ============ Product Expiration Tool ============

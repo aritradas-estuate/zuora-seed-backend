@@ -525,6 +525,40 @@ class ZuoraClient:
 
         return result
 
+    @trace_function(
+        span_name="zuora.charges.update_tier", attributes={"operation": "update_tier"}
+    )
+    def update_charge_tier(
+        self, tier_id: str, updates: Dict[str, Any], charge_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Update a charge tier's price.
+
+        Per Zuora API: PUT /v1/object/product-rate-plan-charge-tier/{id}
+
+        Args:
+            tier_id: Product Rate Plan Charge Tier ID
+            updates: Fields to update (Price, PriceFormat, DiscountPercentage, DiscountAmount)
+            charge_id: Optional parent charge ID for cache invalidation
+
+        Returns:
+            Update result or error
+        """
+        result = self._request(
+            "PUT",
+            f"/v1/object/product-rate-plan-charge-tier/{tier_id}",
+            data=updates,
+            use_cache=False,
+        )
+
+        # Invalidate cache for the parent charge if provided
+        if result.get("success") and self.cache and charge_id:
+            self.cache.invalidate(
+                "GET", f"/v1/catalog/product-rate-plan-charges/{charge_id}"
+            )
+
+        return result
+
     # =========================================================================
     # Utility Methods
     # =========================================================================
