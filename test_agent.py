@@ -780,8 +780,214 @@ def test_ba_documentation_lookup():
 
 
 # =============================================================================
+# ARCHITECT DEMO SCENARIOS (Arch-0 through Arch-7)
+# =============================================================================
+
+
+def test_arch_0_solution_selection():
+    """Arch-0: Solution selection flow (PM-1 style for Architect)."""
+    print("\n" + "=" * 60)
+    print("ARCH-0: Solution Selection Flow")
+    print("=" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": """Set up a customer where they pay upfront for a pool of value 
+        that can be used over time. As the customer uses the service, the cost is 
+        automatically deducted from this prepaid amount. Each bill should clearly 
+        show how much was used, how much was deducted, and how much prepaid value 
+        remains. If the prepaid amount is fully used, the customer can either add 
+        more funds or be billed for additional usage, based on the agreed terms.""",
+        "conversation_id": "arch-0-solution-001",
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_arch_1_pwd_spec_draft():
+    """Arch-1: One-shot PWD spec with validation and placeholders."""
+    print("\n" + "=" * 60)
+    print("ARCH-1: PWD SeedSpec Draft (One-Shot)")
+    print("=" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": """Create a SeedSpec draft (no execution) for a prepaid drawdown wallet:
+
+Product: API Credits Wallet (SKU API-WALLET-100)
+Plans:
+1) Wallet Monthly
+   - Recurring prepayment $500 USD / €460 EUR monthly
+   - Loads 100,000 API_CALL credits each month
+   - Trigger: Service Activation; Co-term to account anniversary
+   - Wallet policies: Account-level pooling (POOL-DEFAULT), rollover 20% capped at 50,000, 
+     rollover expires after 1 month, auto top-up when balance < 10,000 credits → add 100,000 and bill $500/€460
+2) Top-Up Pack
+   - One-time 200,000 credits at $900 / €820
+
+Overage: If auto top-up is OFF and wallet hits 0, charge $0.007 / €0.0065 per API_CALL (monthly).
+
+Validate with PWD rules. Show summary + raw JSON at the end. If valid, generate planned Zuora payloads with placeholders only (no apply).""",
+        "conversation_id": "arch-1-001",
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_arch_2_tenant_autofix():
+    """Arch-2: Tenant checks and auto-fix proposals."""
+    print("\n" + "=" * 60)
+    print("ARCH-2: Tenant Checks + Auto-Fix")
+    print("=" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": """Use the same wallet model but intentionally set UOM = API_CALLS (plural) 
+        and currencies = USD, GBP. Detect tenant issues and propose auto-fixes 
+        (normalize UOM to api_call; enable GBP or swap to EUR). 
+        Show the exact changes before re-validating.""",
+        "conversation_id": "arch-2-001",
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_arch_3_invalid_thresholds():
+    """Arch-3: Invalid threshold detection and fix."""
+    print("\n" + "=" * 60)
+    print("ARCH-3: Invalid Thresholds")
+    print("=" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": """Create "API Credits Wallet (Test Thresholds)" with monthly prepay 
+        that loads 50,000 credits, but set auto-top-up threshold to 75,000. 
+        The validator should fail and recommend a threshold below the monthly load. 
+        Re-run validation after fixing and display the resolution.""",
+        "conversation_id": "arch-3-001",
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_arch_4_rollover_defaults():
+    """Arch-4: Auto-default rollover cap."""
+    print("\n" + "=" * 60)
+    print("ARCH-4: Rollover Defaults")
+    print("=" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": """Create a wallet where rollover_pct = 25 but no rollover_cap provided. 
+        Auto-default the cap to monthly_load × rollover_pct and explain the assumption. 
+        Re-validate and show the final policy in the summary.""",
+        "conversation_id": "arch-4-001",
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_arch_5_planning_export():
+    """Arch-5: Planning payloads with placeholder map."""
+    print("\n" + "=" * 60)
+    print("ARCH-5: Planning Payloads + Export")
+    print("=" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": """For the validated PWD spec, generate only the planning payloads 
+        (Product, Rate Plans, Charges, Orders examples) with placeholder IDs. 
+        Show the placeholder map ({{PRODUCT_ID}}, {{RP_WALLET_MONTHLY_ID}}, etc.) 
+        and show the plan as JSON at the end. Do not execute.""",
+        "conversation_id": "arch-5-001",
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_arch_6_kb_summary():
+    """Arch-6: KB summary with links and checklist."""
+    print("\n" + "=" * 60)
+    print("ARCH-6: Knowledge Base Summary")
+    print("=" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": """Summarize Zuora's recommended approach for Prepaid with Drawdown:
+        - how the wallet is represented,
+        - why drawdown rating price is 0,
+        - how rollover, top-ups, and overage are modeled,
+        - why charge model changes are blocked after go-live.
+        Include 2–3 relevant KC links and a 6-bullet implementation checklist.""",
+        "conversation_id": "arch-6-001",
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+def test_arch_7_pm_handoff():
+    """Arch-7: Generate PM handoff prompt after selecting PPDD option."""
+    print("\n" + "=" * 60)
+    print("ARCH-7: PM Handoff Prompt Generation")
+    print("=" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": """I want to use PPDD (Option 1). Here are my requirements:
+        - Product name: API Credits Wallet
+        - SKU: API-CREDITS-10K
+        - Prepaid quantity: 10,000 credits
+        - Currencies: USD and EUR
+        - Prices: $99 USD, €90 EUR per month
+        - UOM: credit
+        - Include overage at $0.01 USD / €0.009 EUR per credit
+        - No rollover, no top-up pack
+        
+        Generate the ProductManager prompt I can copy and paste.""",
+        "conversation_id": "arch-7-pm-handoff-001",
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+# =============================================================================
 # TEST MENU
 # =============================================================================
+
+ARCH_TESTS = {
+    "arch0": ("Solution Selection Flow", test_arch_0_solution_selection),
+    "arch1": ("Arch-1: PWD Spec Draft", test_arch_1_pwd_spec_draft),
+    "arch2": ("Arch-2: Tenant Auto-Fix", test_arch_2_tenant_autofix),
+    "arch3": ("Arch-3: Invalid Thresholds", test_arch_3_invalid_thresholds),
+    "arch4": ("Arch-4: Rollover Defaults", test_arch_4_rollover_defaults),
+    "arch5": ("Arch-5: Planning Export", test_arch_5_planning_export),
+    "arch6": ("Arch-6: KB Summary", test_arch_6_kb_summary),
+    "arch7": ("Arch-7: PM Handoff Prompt", test_arch_7_pm_handoff),
+}
 
 BA_TESTS = {
     "ba1": ("Prepaid Drawdown Setup", test_ba_prepaid_drawdown_setup),
@@ -830,7 +1036,7 @@ ZUORA_API_TESTS = {
 }
 
 
-ALL_TESTS = {**PM_TESTS, **ZUORA_API_TESTS, **BA_TESTS}
+ALL_TESTS = {**PM_TESTS, **ZUORA_API_TESTS, **BA_TESTS, **ARCH_TESTS}
 
 
 def show_menu():
@@ -853,9 +1059,13 @@ def show_menu():
     print("\n--- BILLING ARCHITECT TESTS (Advisory) ---")
     for key in ["ba1", "ba2", "ba3", "ba4", "ba5", "ba6", "ba7", "ba8", "ba9", "ba10"]:
         print(f"  {key}. {BA_TESTS[key][0]}")
+    print("\n--- ARCHITECT DEMO SCENARIOS (Arch-0 to Arch-7) ---")
+    for key in ["arch0", "arch1", "arch2", "arch3", "arch4", "arch5", "arch6", "arch7"]:
+        print(f"  {key}. {ARCH_TESTS[key][0]}")
     print("\n  a. Run ALL PM tests")
     print("  z. Run ALL Zuora API tests")
     print("  b. Run ALL Billing Architect tests")
+    print("  arch. Run ALL Architect demo scenarios")
     print("  q. Quit")
     print("-" * 60)
 
@@ -865,7 +1075,9 @@ def run_interactive():
     while True:
         show_menu()
         choice = (
-            input("\nSelect test (1-16, z1-z8, ba1-ba10, a, z, b, or q): ")
+            input(
+                "\nSelect test (1-16, z1-z8, ba1-ba10, arch0-arch7, a, z, b, arch, or q): "
+            )
             .strip()
             .lower()
         )
@@ -884,6 +1096,10 @@ def run_interactive():
         elif choice == "b":
             print("\nRunning ALL Billing Architect tests...")
             for key, (name, func) in BA_TESTS.items():
+                func()
+        elif choice == "arch":
+            print("\nRunning ALL Architect demo scenarios...")
+            for key, (name, func) in ARCH_TESTS.items():
                 func()
         elif choice in ALL_TESTS:
             ALL_TESTS[choice][1]()
@@ -908,10 +1124,13 @@ if __name__ == "__main__":
         elif test_num == "b":
             for key, (name, func) in BA_TESTS.items():
                 func()
+        elif test_num == "arch":
+            for key, (name, func) in ARCH_TESTS.items():
+                func()
         else:
             print(f"Unknown test: {test_num}")
             print(
-                f"Available: {', '.join(ALL_TESTS.keys())}, a (all PM), z (all Zuora), b (all BA)"
+                f"Available: {', '.join(ALL_TESTS.keys())}, a (all PM), z (all Zuora), b (all BA), arch (all Architect)"
             )
     else:
         # Interactive menu

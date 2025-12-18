@@ -482,6 +482,54 @@ def get_zuora_environment_info() -> str:
 # ============ Payload State Keys ============
 PAYLOADS_STATE_KEY = "zuora_api_payloads"
 
+# ============ Currency Symbol Mapping ============
+CURRENCY_SYMBOLS: Dict[str, str] = {
+    "USD": "$",
+    "EUR": "€",
+    "GBP": "£",
+    "JPY": "¥",
+    "CNY": "¥",
+    "CHF": "CHF ",
+    "CAD": "CA$",
+    "AUD": "A$",
+    "INR": "₹",
+    "KRW": "₩",
+    "MXN": "MX$",
+    "BRL": "R$",
+    "SGD": "S$",
+    "HKD": "HK$",
+    "SEK": "kr ",
+    "NOK": "kr ",
+    "DKK": "kr ",
+    "NZD": "NZ$",
+    "ZAR": "R ",
+}
+
+
+def _format_currency(amount: float, currency: str, decimals: int = 2) -> str:
+    """
+    Format a currency amount with the appropriate symbol.
+
+    Args:
+        amount: The numeric amount to format
+        currency: Currency code (e.g., "USD", "EUR")
+        decimals: Number of decimal places (default: 2)
+
+    Returns:
+        Formatted string like "$99.00" or "€90.00" or "99.00 XYZ" for unknown currencies
+    """
+    symbol = CURRENCY_SYMBOLS.get(currency, "")
+    if decimals == 2:
+        formatted_amount = f"{amount:,.2f}"
+    else:
+        formatted_amount = f"{amount:.{decimals}f}"
+
+    if symbol:
+        return f"{symbol}{formatted_amount}"
+    else:
+        # For unknown currencies, put code after amount
+        return f"{formatted_amount} {currency}"
+
 
 # ============ Payload Manipulation Tools ============
 
@@ -4233,7 +4281,10 @@ def generate_pwd_seedspec(
         plan_type = "Recurring Prepay" if plan.get("is_recurring", True) else "One-Time"
 
         price_str = " / ".join(
-            [f"${p:,.0f} {c}" if p >= 1 else f"${p:.4f} {c}" for c, p in prices.items()]
+            [
+                f"{_format_currency(p, c, decimals=0 if p >= 1 else 4)} {c}"
+                for c, p in prices.items()
+            ]
         )
         summary_rows.append(
             f"| {plan_name} | {plan_type} | {quantity:,.0f} {uom} | {price_str} | {billing} |"
@@ -4246,7 +4297,7 @@ def generate_pwd_seedspec(
             prices = pack.get("prices", {})
             price_str = " / ".join(
                 [
-                    f"${p:,.0f} {c}" if p >= 1 else f"${p:.4f} {c}"
+                    f"{_format_currency(p, c, decimals=0 if p >= 1 else 4)} {c}"
                     for c, p in prices.items()
                 ]
             )
@@ -4257,7 +4308,10 @@ def generate_pwd_seedspec(
     if overage and overage.get("enabled", True):
         overage_prices = overage.get("prices_per_unit", {})
         price_str = " / ".join(
-            [f"${p:.4f}/{uom} {c}" for c, p in overage_prices.items()]
+            [
+                f"{_format_currency(p, c, decimals=4)}/{uom} {c}"
+                for c, p in overage_prices.items()
+            ]
         )
         overage_billing = overage.get("billing_period", "Month")
         summary_rows.append(
@@ -5035,6 +5089,440 @@ Balance is tracked at account or subscription level via `CommitmentType`:
    - Run billing to generate invoice
 """
     return kb_content
+
+
+# ============ Solution Selection Tools (Billing Architect) ============
+
+
+@tool(context=True)
+def generate_solution_options(
+    tool_context: ToolContext,
+    use_case_description: str,
+) -> str:
+    """
+    Analyze user's prepaid/wallet use case and generate solution options.
+
+    Use this tool when user describes a prepaid, wallet, credits, or balance-based
+    billing scenario. It checks tenant capabilities and provides two solution options:
+    - Option 1: Native PPDD (Prepaid with Drawdown) - Recommended if available
+    - Option 2: Standard workaround using credits/adjustments
+
+    Args:
+        use_case_description: Summary of what the user wants to achieve
+            (e.g., "prepaid credits with automatic deduction and overage billing")
+
+    Returns:
+        Formatted solution options with pros/cons and next step prompt.
+        User should reply with their choice (Option 1 or Option 2).
+    """
+    from .zuora_settings import get_ppdd_capability_status
+
+    # Check tenant capabilities
+    ppdd_status = get_ppdd_capability_status()
+    available_uoms = ppdd_status.get("available_uoms", [])
+    available_currencies = ppdd_status.get("available_currencies", [])
+    ppdd_likely = ppdd_status.get("likely_available", True)
+
+    # Format UOM list for display
+    uom_display = ", ".join(available_uoms[:5]) if available_uoms else "None configured"
+    if len(available_uoms) > 5:
+        uom_display += f" (+{len(available_uoms) - 5} more)"
+
+    # Format currency list
+    currency_display = (
+        ", ".join(available_currencies[:5])
+        if available_currencies
+        else "None configured"
+    )
+
+    # Build output
+    output = f"""
+## Understanding Your Request
+
+{use_case_description}
+
+This is a **prepaid wallet** pattern where:
+- Customer pays upfront for credits/units
+- Usage automatically deducts from the prepaid balance
+- Bills show usage consumed, amount deducted, and remaining balance
+- When exhausted: top-up or overage billing applies
+
+---
+
+## Solution Options
+
+### {"✅" if ppdd_likely else "⚠️"} Option 1: Prepaid with Drawdown (PPDD) {"— Recommended" if ppdd_likely else "— May require setup"}
+
+Native Zuora feature for prepaid wallet billing.
+
+| Benefit | Description |
+|---------|-------------|
+| Automatic balance tracking | Zuora manages the prepaid balance natively |
+| Clear invoices | Shows usage consumed, amount deducted, remaining balance |
+| Auto top-up support | Workflow triggers when balance falls below threshold |
+| Overage billing | Automatic per-unit billing when balance is exhausted |
+| Rollover support | Unused credits can roll over to next period |
+
+**Prerequisites:**
+- PPDD feature enabled in Zuora tenant (Settings > Billing > Prepaid with Drawdown)
+- Unit of Measure (UOM) configured for your credits
+- {"✅ Your tenant appears ready" if ppdd_likely else "⚠️ Some setup may be required"}
+
+**Tenant Status:**
+- UOMs available: {uom_display}
+- Currencies: {currency_display}
+
+---
+
+### ⚠️ Option 2: Standard Workaround (Credits + Manual Tracking)
+
+Use this **only if PPDD is not enabled** in your tenant.
+
+| Aspect | Description |
+|--------|-------------|
+| Approach | One-time/recurring charge for prepaid amount |
+| Balance tracking | Manual — use custom field or external system |
+| Usage billing | Standard usage charge, offset with credit memos |
+| Invoice clarity | Requires custom reporting |
+
+**Drawbacks:**
+- No automatic balance deduction
+- Manual credit memo application required
+- More complex to manage and report
+- No native rollover or auto top-up
+
+---
+
+## Your Tenant Configuration
+
+| Setting | Status |
+|---------|--------|
+| PPDD Capability | {"✅ Likely available" if ppdd_likely else "⚠️ May need setup"} |
+| Units of Measure | {len(available_uoms)} configured |
+| Currencies | {len(available_currencies)} enabled |
+
+---
+
+## Next Step
+
+**Which option would you like to proceed with?**
+
+Reply with one of the following:
+- **"Option 1"** or **"PPDD"** — I'll ask for your requirements and generate a ProductManager prompt
+- **"Option 2"** or **"Standard"** — I'll generate a ProductManager prompt for the workaround approach
+- **"Tell me more about PPDD"** — I'll explain how Prepaid with Drawdown works in detail
+"""
+
+    # Store the options in advisory state for reference
+    payloads = tool_context.agent.state.get(ADVISORY_PAYLOADS_STATE_KEY) or []
+    payloads.append(
+        {
+            "type": "solution_options",
+            "use_case": use_case_description,
+            "ppdd_likely": ppdd_likely,
+            "available_uoms": available_uoms,
+            "available_currencies": available_currencies,
+        }
+    )
+    tool_context.agent.state.set(ADVISORY_PAYLOADS_STATE_KEY, payloads)
+
+    return output
+
+
+@tool(context=True)
+def generate_pm_handoff_prompt(
+    tool_context: ToolContext,
+    solution_type: Literal["ppdd", "standard"],
+    product_name: str,
+    sku: str,
+    prepaid_quantity: int,
+    currencies: List[str],
+    prices: Dict[str, float],
+    uom: str,
+    billing_period: str = "Month",
+    include_overage: bool = True,
+    overage_prices: Optional[Dict[str, float]] = None,
+    include_topup_pack: bool = False,
+    topup_quantity: Optional[int] = None,
+    topup_prices: Optional[Dict[str, float]] = None,
+    include_rollover: bool = False,
+    rollover_periods: Optional[int] = None,
+    include_auto_topup_info: bool = False,
+    auto_topup_threshold: Optional[int] = None,
+) -> str:
+    """
+    Generate a ready-to-paste prompt for ProductManager persona.
+
+    Creates a complete, formatted prompt that the user can copy and paste
+    into a new conversation with ProductManager to create the product structure.
+
+    IMPORTANT: Always ask the user for all required values before calling this tool.
+    Do not use default values - get product_name, sku, prepaid_quantity, currencies,
+    prices, and uom from the user.
+
+    Args:
+        solution_type: "ppdd" for Prepaid with Drawdown, "standard" for workaround
+        product_name: Name of the product (ask user)
+        sku: Product SKU (ask user)
+        prepaid_quantity: Number of credits/units in prepaid charge (ask user)
+        currencies: List of currency codes, e.g., ["USD", "EUR"] (ask user)
+        prices: Price per currency, e.g., {"USD": 99.0, "EUR": 90.0} (ask user)
+        uom: Unit of measure for credits, e.g., "credit", "api_call" (ask user)
+        billing_period: Month, Quarter, Annual (default: Month)
+        include_overage: Whether to include overage charge
+        overage_prices: Price per unit per currency for overage, e.g., {"USD": 0.01}
+        include_topup_pack: Whether to include one-time top-up pack
+        topup_quantity: Units in top-up pack
+        topup_prices: Prices for top-up pack per currency
+        include_rollover: Whether to include rollover configuration info
+        rollover_periods: Number of periods credits can roll over
+        include_auto_topup_info: Whether to include auto top-up workflow info
+        auto_topup_threshold: Balance threshold to trigger auto top-up
+
+    Returns:
+        Formatted prompt ready to copy/paste into ProductManager conversation.
+    """
+    # Format prices for display
+    price_display = " / ".join(
+        [f"{_format_currency(p, c)} {c}" for c, p in prices.items()]
+    )
+
+    if solution_type == "ppdd":
+        # Build the PPDD prompt
+        prompt_lines = [
+            "Create a Zuora Product with Prepaid Drawdown:",
+            "",
+            f"**Product:** {product_name} (SKU: {sku})",
+            "",
+            f"**Rate Plan:** {prepaid_quantity:,} {uom.title()}s {billing_period}ly",
+            "",
+            "**Charges to create:**",
+            "",
+            f'1. **Prepaid Charge: "{prepaid_quantity:,} {uom.title()} Top-Up"**',
+            "   - Type: Recurring",
+            "   - Model: Flat Fee",
+        ]
+
+        # Add prices for each currency
+        for currency, price in prices.items():
+            prompt_lines.append(
+                f"   - Price ({currency}): {_format_currency(price, currency)} per {billing_period.lower()}, billed In Advance"
+            )
+
+        prompt_lines.extend(
+            [
+                "   - ChargeFunction: Prepayment",
+                f"   - Prepaid Quantity: {prepaid_quantity:,} {uom}",
+                "   - CommitmentType: UNIT",
+                f"   - ValidityPeriodType: {billing_period.upper()}",
+                "   - CreditOption: ConsumptionBased",
+            ]
+        )
+
+        # Add rollover info if requested
+        if include_rollover and rollover_periods:
+            prompt_lines.extend(
+                [
+                    "   - IsRollover: true",
+                    f"   - RolloverPeriods: {rollover_periods}",
+                    "   - RolloverApply: ApplyFirst",
+                ]
+            )
+
+        prompt_lines.extend(
+            [
+                "",
+                f'2. **Drawdown Charge: "{uom.title()} Usage"**',
+                "   - Type: Usage",
+                "   - Model: Per Unit",
+                "   - Price: $0 (draws from prepaid balance, not billed separately)",
+                "   - ChargeFunction: Drawdown",
+                f"   - UOM: {uom}",
+                "   - RatingGroup: ByBillingPeriod",
+            ]
+        )
+
+        # Add overage charge if requested
+        if include_overage and overage_prices:
+            prompt_lines.extend(
+                [
+                    "",
+                    '3. **Overage Charge: "Overage Usage"**',
+                    "   - Type: Usage",
+                    "   - Model: Per Unit",
+                ]
+            )
+            for currency, price in overage_prices.items():
+                prompt_lines.append(
+                    f"   - Price ({currency}): {_format_currency(price, currency, decimals=4)} per {uom}"
+                )
+            prompt_lines.extend(
+                [
+                    "   - ChargeFunction: Standard (NOT Drawdown)",
+                    f"   - UOM: {uom}",
+                    "   - Description: Billed when prepaid balance is exhausted",
+                ]
+            )
+
+        # Add top-up pack if requested
+        if include_topup_pack and topup_quantity and topup_prices:
+            topup_price_display = " / ".join(
+                [f"{_format_currency(p, c)} {c}" for c, p in topup_prices.items()]
+            )
+            prompt_lines.extend(
+                [
+                    "",
+                    "**Additional Rate Plan:** One-Time Top-Up Pack",
+                    "",
+                    f'**Charge: "{topup_quantity:,} {uom.title()} Top-Up Pack"**',
+                    "   - Type: OneTime",
+                    "   - Model: Flat Fee",
+                    f"   - Price: {topup_price_display}",
+                    "   - ChargeFunction: Prepayment",
+                    f"   - Prepaid Quantity: {topup_quantity:,} {uom}",
+                ]
+            )
+
+        prompt_content = "\n".join(prompt_lines)
+
+    else:  # standard workaround
+        prompt_lines = [
+            "Create a Zuora Product for prepaid credits (standard approach without PPDD):",
+            "",
+            f"**Product:** {product_name} (SKU: {sku})",
+            "",
+            f"**Rate Plan:** {prepaid_quantity:,} {uom.title()}s Package",
+            "",
+            "**Charges to create:**",
+            "",
+            f'1. **Prepaid Charge: "{uom.title()} Purchase"**',
+            "   - Type: OneTime (or Recurring for auto-renewal)",
+            "   - Model: Flat Fee",
+        ]
+
+        for currency, price in prices.items():
+            prompt_lines.append(
+                f"   - Price ({currency}): {_format_currency(price, currency)}"
+            )
+
+        prompt_lines.extend(
+            [
+                f"   - Description: Prepaid {uom} purchase - track balance externally or in custom field",
+                "",
+                f'2. **Usage Charge: "{uom.title()} Usage"**',
+                "   - Type: Usage",
+                "   - Model: Per Unit",
+            ]
+        )
+
+        if overage_prices:
+            for currency, price in overage_prices.items():
+                prompt_lines.append(
+                    f"   - Price ({currency}): {_format_currency(price, currency, decimals=4)} per {uom}"
+                )
+        else:
+            prompt_lines.append(f"   - Price: 0.01 per {uom} (adjust as needed)")
+
+        prompt_lines.extend(
+            [
+                f"   - UOM: {uom}",
+                "   - Description: Usage billed normally - apply credit memos to offset against prepaid amount",
+                "",
+                "**Important Notes for Standard Approach:**",
+                "- Create a custom field on Account (e.g., PrepaidBalance__c) to track remaining balance",
+                "- Use credit memos to offset usage charges against the prepaid amount",
+                "- Consider creating a workflow to automate credit memo application",
+            ]
+        )
+
+        prompt_content = "\n".join(prompt_lines)
+
+    # Build the full output
+    output = f"""
+## ProductManager Prompt Generated
+
+Copy the text below and paste it into a new conversation with the **ProductManager** persona:
+
+---
+
+```
+{prompt_content}
+```
+
+---
+
+### Configuration Summary
+
+| Setting | Value |
+|---------|-------|
+| Solution | {"Prepaid with Drawdown (PPDD)" if solution_type == "ppdd" else "Standard Workaround"} |
+| Product | {product_name} ({sku}) |
+| Prepaid Amount | {prepaid_quantity:,} {uom} |
+| Price | {price_display} |
+| Billing | {billing_period}ly |
+| Overage | {"Yes - " + ", ".join([f"{_format_currency(p, c, decimals=4)}/{uom} {c}" for c, p in (overage_prices or {}).items()]) if include_overage and overage_prices else "No"} |
+| Rollover | {"Yes - " + str(rollover_periods) + " periods" if include_rollover and rollover_periods else "No"} |
+
+---
+
+### How to Use This Prompt
+
+1. **Start a new chat** with the **ProductManager** persona
+2. **Copy and paste** the entire prompt from the code block above
+3. ProductManager will create payloads for the product, rate plan, and charges
+4. **Review** the generated payloads
+5. **Send to Zuora** when ready to create the actual catalog objects
+
+---
+"""
+
+    # Add auto top-up info if requested
+    if include_auto_topup_info and auto_topup_threshold:
+        output += f"""
+### Auto Top-Up Workflow (Separate Configuration)
+
+To enable automatic top-up when balance falls below {auto_topup_threshold:,} {uom}:
+
+1. Create a **Workflow** in Zuora (Settings > Workflows)
+2. Trigger: `PrepaidBalanceLow` event
+3. Condition: `PrepaidBalance < {auto_topup_threshold}`
+4. Action: Create Order to add top-up rate plan
+
+This requires additional setup beyond the product catalog.
+
+---
+"""
+
+    output += """
+### Want to customize?
+
+Tell me what to change:
+- "Add another currency (GBP at £80)"
+- "Change prepaid quantity to 50,000"
+- "Include a top-up pack"
+- "Add rollover for 2 periods"
+"""
+
+    # Store the PM handoff prompt in advisory state for reference
+    payloads = tool_context.agent.state.get(ADVISORY_PAYLOADS_STATE_KEY) or []
+    payloads.append(
+        {
+            "type": "pm_handoff_prompt",
+            "solution_type": solution_type,
+            "product_name": product_name,
+            "sku": sku,
+            "prepaid_quantity": prepaid_quantity,
+            "currencies": currencies,
+            "prices": prices,
+            "uom": uom,
+            "billing_period": billing_period,
+            "include_overage": include_overage,
+            "overage_prices": overage_prices,
+        }
+    )
+    tool_context.agent.state.set(ADVISORY_PAYLOADS_STATE_KEY, payloads)
+
+    return output
 
 
 @tool(context=True)
@@ -5909,6 +6397,7 @@ def generate_multi_attribute_pricing(
     charge_name: str,
     attributes: List[Dict[str, Any]],
     base_price: float,
+    currency: str = "USD",
 ) -> str:
     """
     Generate Multi-Attribute Pricing (MAP) configuration.
@@ -5920,6 +6409,7 @@ def generate_multi_attribute_pricing(
         attributes: List of pricing attributes with their values
                    Example: [{"name": "Region", "values": ["US", "EU", "APAC"]}]
         base_price: Base price before attribute adjustments
+        currency: Currency code for pricing (default: USD)
 
     Returns:
         Complete MAP configuration guide.
@@ -5948,7 +6438,7 @@ def generate_multi_attribute_pricing(
 ## Multi-Attribute Pricing Configuration
 
 ### Charge: {charge_name}
-### Base Price: ${base_price:,.2f}
+### Base Price: {_format_currency(base_price, currency)}
 
 ---
 
@@ -5967,7 +6457,7 @@ def generate_multi_attribute_pricing(
 |-----------------|-------|
 """
     for key, price in price_matrix.items():
-        guide += f"| {key} | ${price:,.2f} |\n"
+        guide += f"| {key} | {_format_currency(price, currency)} |\n"
 
     if combined_matrix:
         guide += """
@@ -5979,7 +6469,7 @@ def generate_multi_attribute_pricing(
 |-------------|-------|
 """
         for key, price in list(combined_matrix.items())[:8]:  # Show first 8
-            guide += f"| {key} | ${price:,.2f} |\n"
+            guide += f"| {key} | {_format_currency(price, currency)} |\n"
 
         if len(combined_matrix) > 8:
             guide += f"| ... | ({len(combined_matrix) - 8} more combinations) |\n"
@@ -6001,7 +6491,7 @@ def generate_multi_attribute_pricing(
 
     guide += f"""
 5. Enter prices in the matrix grid
-6. Set default price for unmatched combinations: ${base_price:,.2f}
+6. Set default price for unmatched combinations: {_format_currency(base_price, currency)}
 7. Save and verify
 
 ---
@@ -6024,25 +6514,25 @@ def generate_multi_attribute_pricing(
 ```
 """
 
-    guide += """
+    guide += f"""
 **Step 2: Create Price Lookup Field**
 ```json
-{
+{{
     "name": "CalculatedPrice__c",
     "label": "Calculated Price",
     "type": "Number",
     "description": "Pre-calculated price based on attributes"
-}
+}}
 ```
 
 **Step 3: Use in Charge Pricing**
 ```json
-{
-    "pricing": [{
-        "currency": "USD",
+{{
+    "pricing": [{{
+        "currency": "{currency}",
         "price": "fieldLookup('account', 'CalculatedPrice__c')"
-    }]
-}
+    }}]
+}}
 ```
 
 **Note:** You'll need a workflow or external process to calculate and update `CalculatedPrice__c` based on the attribute combination.
@@ -6057,12 +6547,12 @@ Create separate rate plans for each combination:
 """
     if combined_matrix:
         for i, (key, price) in enumerate(list(combined_matrix.items())[:4]):
-            guide += f"- `{charge_name} - {key.replace('|', ' / ')}`: ${price:,.2f}\n"
+            guide += f"- `{charge_name} - {key.replace('|', ' / ')}`: {_format_currency(price, currency)}\n"
         if len(combined_matrix) > 4:
             guide += f"- ... ({len(combined_matrix) - 4} more rate plans)\n"
     else:
         for key, price in price_matrix.items():
-            guide += f"- `{charge_name} - {key}`: ${price:,.2f}\n"
+            guide += f"- `{charge_name} - {key}`: {_format_currency(price, currency)}\n"
 
     guide += f"""
 **Pros:**

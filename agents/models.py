@@ -1024,6 +1024,61 @@ class PWDValidationResult(BaseModel):
     applied_defaults: List[str] = []
 
 
+# ============ Solution Options Models (Billing Architect) ============
+
+
+class SolutionOption(BaseModel):
+    """Solution option for prepaid/wallet use cases."""
+
+    name: str = Field(..., description="Option name, e.g., 'Prepaid with Drawdown'")
+    option_type: Literal["ppdd", "standard"] = Field(
+        ..., description="Solution type identifier"
+    )
+    recommended: bool = Field(
+        False, description="Whether this is the recommended option"
+    )
+    benefits: List[str] = Field(default_factory=list, description="List of benefits")
+    drawbacks: List[str] = Field(default_factory=list, description="List of drawbacks")
+    prerequisites: List[str] = Field(default_factory=list, description="Required setup")
+    when_to_use: str = Field("", description="When this option is appropriate")
+
+
+class PMHandoffConfig(BaseModel):
+    """Configuration for generating ProductManager handoff prompt."""
+
+    solution_type: Literal["ppdd", "standard"] = Field(
+        ..., description="Which solution approach to generate"
+    )
+    product_name: str = Field(..., description="Name of the product to create")
+    sku: str = Field(..., description="Product SKU")
+    prepaid_quantity: int = Field(..., description="Number of credits/units")
+    currencies: List[str] = Field(..., description="List of currency codes")
+    prices: Dict[str, float] = Field(
+        ..., description="Price per currency, e.g., {'USD': 99.0, 'EUR': 90.0}"
+    )
+    uom: str = Field(..., description="Unit of measure for credits")
+    billing_period: str = Field("Month", description="Billing period")
+    include_overage: bool = Field(True, description="Include overage charge")
+    overage_prices: Optional[Dict[str, float]] = Field(
+        None, description="Overage price per unit per currency"
+    )
+    include_topup_pack: bool = Field(False, description="Include one-time top-up pack")
+    topup_quantity: Optional[int] = Field(None, description="Units in top-up pack")
+    topup_prices: Optional[Dict[str, float]] = Field(
+        None, description="Top-up pack prices per currency"
+    )
+    include_rollover: bool = Field(False, description="Include rollover configuration")
+    rollover_periods: Optional[int] = Field(
+        None, description="Number of rollover periods"
+    )
+    include_auto_topup: bool = Field(
+        False, description="Include auto top-up workflow info"
+    )
+    auto_topup_threshold: Optional[int] = Field(
+        None, description="Balance threshold to trigger auto top-up"
+    )
+
+
 # ============ Account Custom Field Models ============
 
 

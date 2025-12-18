@@ -357,6 +357,112 @@ def get_environment_context_for_prompt() -> str:
     return "".join(lines)
 
 
+def get_ppdd_capability_status() -> Dict[str, Any]:
+    """
+    Check if Prepaid with Drawdown (PPDD) is likely available in tenant.
+
+    Checks for indicators that PPDD is enabled:
+    - ChargeFunction field availability (inferred from charge models)
+    - Required charge models (Per Unit, Flat Fee)
+    - UOM availability
+
+    Note: Zuora doesn't expose a direct "is PPDD enabled" API endpoint,
+    so we infer based on available capabilities.
+
+    Returns:
+        Dict with:
+        - likely_available: bool - Whether PPDD is likely enabled
+        - indicators: List[str] - Positive indicators found
+        - missing: List[str] - Things that might be missing
+        - recommendation: str - Advice for the user
+        - available_uoms: List[str] - UOMs available for prepaid
+        - available_currencies: List[str] - Currencies available
+    """
+    settings = fetch_environment_settings()
+
+    indicators: List[str] = []
+    missing: List[str] = []
+
+    # Check for errors
+    if "_error" in settings:
+        return {
+            "likely_available": True,  # Assume yes if we can't check
+            "indicators": [],
+            "missing": ["Could not fetch tenant settings to verify"],
+            "recommendation": (
+                "Could not verify tenant settings. Assuming PPDD is available. "
+                "If you encounter errors, check Settings > Billing > Prepaid with Drawdown."
+            ),
+            "available_uoms": [],
+            "available_currencies": [],
+        }
+
+    # Check charge models - PPDD requires certain models
+    charge_models = get_available_charge_models()
+
+    # Check for Per Unit Pricing (needed for drawdown charge)
+    per_unit_found = any(
+        "per unit" in cm.lower() or "perunit" in cm.lower() for cm in charge_models
+    )
+    if per_unit_found:
+        indicators.append("Per Unit Pricing available (required for drawdown charge)")
+    else:
+        missing.append("Per Unit Pricing charge model not found")
+
+    # Check for Flat Fee Pricing (needed for prepaid charge)
+    flat_fee_found = any(
+        "flat fee" in cm.lower() or "flatfee" in cm.lower() for cm in charge_models
+    )
+    if flat_fee_found:
+        indicators.append("Flat Fee Pricing available (required for prepaid charge)")
+    else:
+        missing.append("Flat Fee Pricing charge model not found")
+
+    # Check UOMs - PPDD requires at least one UOM
+    uoms = get_available_uom_names()
+    if uoms:
+        indicators.append(f"Units of Measure configured: {len(uoms)} available")
+    else:
+        missing.append("No Units of Measure configured (required for credit tracking)")
+
+    # Check currencies
+    currencies = get_available_currencies()
+    if currencies:
+        indicators.append(f"Currencies enabled: {', '.join(currencies[:3])}")
+    else:
+        missing.append("No currencies configured")
+
+    # Determine likelihood based on indicators
+    # PPDD requires Per Unit + Flat Fee at minimum
+    likely_available = per_unit_found and flat_fee_found and len(uoms) > 0
+
+    # Build recommendation
+    if likely_available:
+        recommendation = (
+            "PPDD appears to be available based on tenant configuration. "
+            "The required charge models and UOMs are present."
+        )
+    elif missing:
+        recommendation = (
+            f"Some prerequisites may be missing: {', '.join(missing)}. "
+            "Check Zuora Settings > Billing > Prepaid with Drawdown to enable the feature."
+        )
+    else:
+        recommendation = (
+            "Unable to determine PPDD availability. "
+            "Check Zuora Settings > Billing > Prepaid with Drawdown."
+        )
+
+    return {
+        "likely_available": likely_available,
+        "indicators": indicators,
+        "missing": missing,
+        "recommendation": recommendation,
+        "available_uoms": uoms,
+        "available_currencies": currencies,
+    }
+
+
 def clear_cache():
     """Clear the cached settings (for testing or refresh)."""
     global _cached_settings, _fetch_attempted, _fetch_error
