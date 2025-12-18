@@ -2,6 +2,7 @@
 OpenTelemetry observability utilities for Zuora Seed Agent.
 Provides centralized tracing, metrics collection, and instrumentation.
 """
+
 import os
 import time
 import functools
@@ -19,7 +20,7 @@ from opentelemetry.trace import Status, StatusCode
 # Global singleton instances
 _tracer: Optional[trace.Tracer] = None
 _meter: Optional[metrics.Meter] = None
-_metrics_collector: Optional['MetricsCollector'] = None
+_metrics_collector: Optional["MetricsCollector"] = None
 _initialized = False
 
 
@@ -36,9 +37,9 @@ def initialize_observability() -> None:
     # Check if observability is enabled
     otel_enabled = os.getenv("OTEL_ENABLED", "true").lower() == "true"
     if not otel_enabled:
-        # Create no-op tracer and meter
-        _tracer = trace.NoOpTracer()
-        _meter = metrics.NoOpMeter()
+        # Create no-op tracer and meter using provider factories
+        _tracer = trace.get_tracer_provider().get_tracer("noop")
+        _meter = metrics.get_meter_provider().get_meter("noop")
         _metrics_collector = MetricsCollector()
         _initialized = True
         return
@@ -87,9 +88,13 @@ def initialize_observability() -> None:
     if otlp_metric_exporter:
         metric_reader = PeriodicExportingMetricReader(
             otlp_metric_exporter,
-            export_interval_millis=int(os.getenv("OTEL_METRIC_EXPORT_INTERVAL", "60000"))
+            export_interval_millis=int(
+                os.getenv("OTEL_METRIC_EXPORT_INTERVAL", "60000")
+            ),
         )
-        meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
+        meter_provider = MeterProvider(
+            resource=resource, metric_readers=[metric_reader]
+        )
     else:
         meter_provider = MeterProvider(resource=resource)
 
@@ -118,6 +123,7 @@ def get_tracer() -> trace.Tracer:
     """Get the global tracer instance."""
     if _tracer is None:
         initialize_observability()
+    assert _tracer is not None
     return _tracer
 
 
@@ -125,19 +131,20 @@ def get_meter() -> metrics.Meter:
     """Get the global meter instance."""
     if _meter is None:
         initialize_observability()
+    assert _meter is not None
     return _meter
 
 
-def get_metrics_collector() -> 'MetricsCollector':
+def get_metrics_collector() -> "MetricsCollector":
     """Get the global metrics collector instance."""
     if _metrics_collector is None:
         initialize_observability()
+    assert _metrics_collector is not None
     return _metrics_collector
 
 
 def trace_function(
-    span_name: Optional[str] = None,
-    attributes: Optional[Dict[str, Any]] = None
+    span_name: Optional[str] = None, attributes: Optional[Dict[str, Any]] = None
 ) -> Callable:
     """
     Decorator to automatically trace a function with OpenTelemetry.
@@ -151,11 +158,14 @@ def trace_function(
         def my_function(arg1, arg2):
             # ... implementation ...
     """
-    def decorator(func: Callable) -> Callable:
+
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             tracer = get_tracer()
-            name = span_name or f"{func.__module__}.{func.__name__}"
+            func_name = getattr(func, "__name__", "unknown")
+            func_module = getattr(func, "__module__", "unknown")
+            name = span_name or f"{func_module}.{func_name}"
 
             with tracer.start_as_current_span(name) as span:
                 # Set default attributes
@@ -163,8 +173,8 @@ def trace_function(
                     for key, value in attributes.items():
                         span.set_attribute(key, value)
 
-                span.set_attribute("function.name", func.__name__)
-                span.set_attribute("function.module", func.__module__)
+                span.set_attribute("function.name", func_name)
+                span.set_attribute("function.module", func_module)
 
                 # Execute function
                 start_time = time.time()
@@ -185,6 +195,7 @@ def trace_function(
                     raise
 
         return wrapper
+
     return decorator
 
 
@@ -201,73 +212,71 @@ class MetricsCollector:
         self.requests_total = meter.create_counter(
             name="requests_total",
             description="Total number of requests processed",
-            unit="1"
+            unit="1",
         )
         self.request_duration = meter.create_histogram(
             name="request_duration_ms",
             description="Request duration in milliseconds",
-            unit="ms"
+            unit="ms",
         )
         self.errors_total = meter.create_counter(
-            name="errors_total",
-            description="Total number of errors",
-            unit="1"
+            name="errors_total", description="Total number of errors", unit="1"
         )
 
         # Agent metrics
         self.agent_invocations_total = meter.create_counter(
             name="agent_invocations_total",
             description="Total number of agent invocations",
-            unit="1"
+            unit="1",
         )
         self.agent_invocation_duration = meter.create_histogram(
             name="agent_invocation_duration_ms",
             description="Agent invocation duration in milliseconds",
-            unit="ms"
+            unit="ms",
         )
 
         # Tool metrics
         self.tool_executions_total = meter.create_counter(
             name="tool_executions_total",
             description="Total number of tool executions",
-            unit="1"
+            unit="1",
         )
         self.tool_execution_duration = meter.create_histogram(
             name="tool_execution_duration_ms",
             description="Tool execution duration in milliseconds",
-            unit="ms"
+            unit="ms",
         )
 
         # API metrics
         self.api_calls_total = meter.create_counter(
             name="api_calls_total",
             description="Total number of Zuora API calls",
-            unit="1"
+            unit="1",
         )
         self.api_call_duration = meter.create_histogram(
             name="api_call_duration_ms",
             description="Zuora API call duration in milliseconds",
-            unit="ms"
+            unit="ms",
         )
         self.api_errors_total = meter.create_counter(
             name="api_errors_total",
             description="Total number of Zuora API errors",
-            unit="1"
+            unit="1",
         )
 
         # Cache metrics
         self.cache_hits_total = meter.create_counter(
-            name="cache_hits_total",
-            description="Total number of cache hits",
-            unit="1"
+            name="cache_hits_total", description="Total number of cache hits", unit="1"
         )
         self.cache_misses_total = meter.create_counter(
             name="cache_misses_total",
             description="Total number of cache misses",
-            unit="1"
+            unit="1",
         )
 
-    def record_request(self, persona: str, duration_ms: float, success: bool = True) -> None:
+    def record_request(
+        self, persona: str, duration_ms: float, success: bool = True
+    ) -> None:
         """Record a request metric."""
         attributes = {"persona": persona, "success": str(success)}
         self.requests_total.add(1, attributes)
@@ -276,39 +285,39 @@ class MetricsCollector:
         if not success:
             self.errors_total.add(1, attributes)
 
-    def record_agent_invocation(self, persona: str, duration_ms: float, success: bool = True) -> None:
+    def record_agent_invocation(
+        self, persona: str, duration_ms: float, success: bool = True
+    ) -> None:
         """Record an agent invocation metric."""
         attributes = {"persona": persona, "success": str(success)}
         self.agent_invocations_total.add(1, attributes)
         self.agent_invocation_duration.record(duration_ms, attributes)
 
-    def record_tool_execution(self, tool_name: str, category: str, duration_ms: float, success: bool = True) -> None:
+    def record_tool_execution(
+        self, tool_name: str, category: str, duration_ms: float, success: bool = True
+    ) -> None:
         """Record a tool execution metric."""
         attributes = {
             "tool_name": tool_name,
             "category": category,
-            "success": str(success)
+            "success": str(success),
         }
         self.tool_executions_total.add(1, attributes)
         self.tool_execution_duration.record(duration_ms, attributes)
 
-    def record_api_call(self, method: str, endpoint: str, duration_ms: float, success: bool = True) -> None:
+    def record_api_call(
+        self, method: str, endpoint: str, duration_ms: float, success: bool = True
+    ) -> None:
         """Record a Zuora API call metric."""
-        attributes = {
-            "method": method,
-            "endpoint": endpoint,
-            "success": str(success)
-        }
+        attributes = {"method": method, "endpoint": endpoint, "success": str(success)}
         self.api_calls_total.add(1, attributes)
         self.api_call_duration.record(duration_ms, attributes)
 
-    def record_api_error(self, method: str, endpoint: str, error_type: str = "unknown") -> None:
+    def record_api_error(
+        self, method: str, endpoint: str, error_type: str = "unknown"
+    ) -> None:
         """Record a Zuora API error metric."""
-        attributes = {
-            "method": method,
-            "endpoint": endpoint,
-            "error_type": error_type
-        }
+        attributes = {"method": method, "endpoint": endpoint, "error_type": error_type}
         self.api_errors_total.add(1, attributes)
 
     def record_cache_hit(self, operation: str) -> None:

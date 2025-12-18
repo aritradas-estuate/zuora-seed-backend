@@ -6,7 +6,7 @@ from agentcore_app import invoke
 def print_response(response: dict):
     """Pretty print response with answer and payload count."""
     print(f"\nAnswer:\n{response.get('answer', 'No answer')}")
-    payloads = response.get('zuora_api_payloads', [])
+    payloads = response.get("zuora_api_payloads", [])
     if payloads:
         print(f"\nPayloads ({len(payloads)}):")
         print(json.dumps(payloads, indent=2))
@@ -17,6 +17,7 @@ def print_response(response: dict):
 # PRODUCT MANAGER TEST SCENARIOS
 # =============================================================================
 
+
 def test_pm_bundle_starter_suite():
     """PM Test: Bundle product combining multiple products."""
     print("\n" + "=" * 60)
@@ -26,7 +27,7 @@ def test_pm_bundle_starter_suite():
     request = {
         "persona": "ProductManager",
         "message": 'Create a bundle called "Starter Suite" that combines Core CRM and Analytics Pro together at $199 per month.',
-        "conversation_id": "pm-bundle-001"
+        "conversation_id": "pm-bundle-001",
     }
     try:
         response = invoke(request)
@@ -44,7 +45,7 @@ def test_pm_tiered_data_transfer():
     request = {
         "persona": "ProductManager",
         "message": 'Create a "Data Transfer" plan with tiered pricing per GB: 0-10 TB @ $0.09/GB, 10-50 TB @ $0.07/GB, 50 TB+ @ $0.05/GB.',
-        "conversation_id": "pm-tiered-001"
+        "conversation_id": "pm-tiered-001",
     }
     try:
         response = invoke(request)
@@ -62,7 +63,7 @@ def test_pm_volume_seat_licensing():
     request = {
         "persona": "ProductManager",
         "message": 'Create "Seat Licensing" with volume pricing per seat: 1-10 @ $20, 11-50 @ $18, 51+ @ $15 per month.',
-        "conversation_id": "pm-volume-001"
+        "conversation_id": "pm-volume-001",
     }
     try:
         response = invoke(request)
@@ -80,7 +81,7 @@ def test_pm_usage_sms_pack():
     request = {
         "persona": "ProductManager",
         "message": 'Create "SMS Pack": $49/month base includes 1,000 SMS, overage $0.015/SMS after that.',
-        "conversation_id": "pm-sms-001"
+        "conversation_id": "pm-sms-001",
     }
     try:
         response = invoke(request)
@@ -98,7 +99,7 @@ def test_pm_multicurrency_premium_support():
     request = {
         "persona": "ProductManager",
         "message": 'Create "Premium Support" with $299/month and a one-time setup fee of $999. Add USD & EUR (EUR price €279, setup €949).',
-        "conversation_id": "pm-multicurrency-001"
+        "conversation_id": "pm-multicurrency-001",
     }
     try:
         response = invoke(request)
@@ -116,7 +117,7 @@ def test_pm_ramp_growth_bundle():
     request = {
         "persona": "ProductManager",
         "message": 'Create "Growth Bundle (Ramp)": Months 1-3 @ $100/mo, Months 4-6 @ $150/mo, Months 7-12 @ $200/mo; then auto-renew at $200/mo.',
-        "conversation_id": "pm-ramp-001"
+        "conversation_id": "pm-ramp-001",
     }
     try:
         response = invoke(request)
@@ -134,7 +135,7 @@ def test_pm_prepaid_api_credits():
     request = {
         "persona": "ProductManager",
         "message": 'Create "API Credits Wallet" with monthly prepayment $500 that loads 100,000 API_CALL credits into a wallet. Allow auto top-up and overage when credits run out. Support USD & EUR.',
-        "conversation_id": "pm-prepaid-001"
+        "conversation_id": "pm-prepaid-001",
     }
     try:
         response = invoke(request)
@@ -147,6 +148,7 @@ def test_pm_prepaid_api_credits():
 # PM WORKFLOW TESTS (PM-1 through PM-7)
 # =============================================================================
 
+
 def test_pm_1_connect_gate():
     """PM-1: Connection gate check."""
     print("\n" + "=" * 60)
@@ -156,7 +158,7 @@ def test_pm_1_connect_gate():
     request = {
         "persona": "ProductManager",
         "message": "Connect me to our Zuora sandbox for write operations and confirm OAuth is active. If not connected, block create/update actions and prompt me to authenticate.",
-        "conversation_id": "pm-1-connect"
+        "conversation_id": "pm-1-connect",
     }
     try:
         response = invoke(request)
@@ -188,7 +190,7 @@ Rate plan 2: API Usage
 - Overage: enabled at $0.003 per call after included units
 
 Build the SeedSpec, show the human summary, then the Raw JSON, and run full validation. If valid, generate planning payloads and I'll press Create Product.""",
-        "conversation_id": "pm-2-guided"
+        "conversation_id": "pm-2-guided",
     }
     try:
         response = invoke(request)
@@ -213,7 +215,7 @@ Assume nothing else. Ask me to confirm:
 - Exact UOM name (api_call vs api_calls)
 - Whether overage is same rate or different
 Then finalize SeedSpec → validate → plan (no execution until I confirm).""",
-        "conversation_id": "pm-3-oneshot"
+        "conversation_id": "pm-3-oneshot",
     }
     try:
         response = invoke(request)
@@ -231,7 +233,7 @@ def test_pm_4_tenant_checks():
     request = {
         "persona": "ProductManager",
         "message": 'Create product "Pro Global" with currencies USD and GBP, and a usage UOM named api_calls (plural). If GBP or api_calls aren\'t enabled in this tenant, propose safe auto-fixes (enable GBP, normalize UOM to api_call), show what will change, and re-validate before planning.',
-        "conversation_id": "pm-4-tenant"
+        "conversation_id": "pm-4-tenant",
     }
     try:
         response = invoke(request)
@@ -252,7 +254,7 @@ def test_pm_5_business_rules_edge():
 - Base recurring $49 (no billing period specified on purpose)
 - Usage tiered pricing: 1-10k at $0.004, 10,001-50k at $0.0035, then $0.003 beyond
 Let the validator catch the missing billing period and any tier gaps. Suggest minimal fixes only and show exactly what you changed before continuing.""",
-        "conversation_id": "pm-5-business"
+        "conversation_id": "pm-5-business",
     }
     try:
         response = invoke(request)
@@ -270,7 +272,7 @@ def test_pm_6_duplicate_names():
     request = {
         "persona": "ProductManager",
         "message": 'Create "Pro Suite Enterprise Limited Introductory Edition 2026 - Super Long Name" with two rate plans both named "Base". Enforce unique names and length limits; propose truncated names and "Base (1)/(2)". Show the diff, then proceed if I approve.',
-        "conversation_id": "pm-6-duplicates"
+        "conversation_id": "pm-6-duplicates",
     }
     try:
         response = invoke(request)
@@ -288,7 +290,7 @@ def test_pm_7_execute():
     request = {
         "persona": "ProductManager",
         "message": "Everything looks good—execute: create the product, both rate plans, and charges. Return success with links to the created Product and Rate Plans in the tenant.",
-        "conversation_id": "pm-7-execute"
+        "conversation_id": "pm-7-execute",
     }
     try:
         response = invoke(request)
@@ -300,6 +302,7 @@ def test_pm_7_execute():
 # =============================================================================
 # LEGACY TESTS
 # =============================================================================
+
 
 def test_agent_direct():
     """Test the agent directly (legacy mode)."""
@@ -331,7 +334,7 @@ def test_chat_api_basic():
     request_1 = {
         "persona": "ProductManager",
         "message": "What can you help me with?",
-        "conversation_id": "test-conv-001"
+        "conversation_id": "test-conv-001",
     }
     try:
         response = invoke(request_1)
@@ -350,11 +353,11 @@ def test_chat_api_basic():
                     "name": "Gold Tier",
                     "sku": "GOLD-001",
                     "description": "Our gold tier product",
-                    "effectiveStartDate": "2024-01-01"
+                    "effectiveStartDate": "2024-01-01",
                 },
-                "zuora_api_type": "product"
+                "zuora_api_type": "product",
             }
-        ]
+        ],
     }
     try:
         response = invoke(request_2)
@@ -367,6 +370,7 @@ def test_chat_api_basic():
 # ZUORA API VIEW/UPDATE TESTS
 # =============================================================================
 
+
 def test_zuora_connect():
     """Test: Connect to Zuora sandbox."""
     print("\n" + "=" * 60)
@@ -376,7 +380,7 @@ def test_zuora_connect():
     request = {
         "persona": "ProductManager",
         "message": "Connect me to our Zuora sandbox for write operations and confirm OAuth is active.",
-        "conversation_id": "zuora-connect-001"
+        "conversation_id": "zuora-connect-001",
     }
     try:
         response = invoke(request)
@@ -394,7 +398,7 @@ def test_zuora_view_all_products():
     request = {
         "persona": "ProductManager",
         "message": "Show me all products in the catalog.",
-        "conversation_id": "zuora-view-all-001"
+        "conversation_id": "zuora-view-all-001",
     }
     try:
         response = invoke(request)
@@ -412,7 +416,7 @@ def test_zuora_view_specific_product():
     request = {
         "persona": "ProductManager",
         "message": "I want to view details of a specific product. The product name is 'Solar Plan Premium'.",
-        "conversation_id": "zuora-view-specific-001"
+        "conversation_id": "zuora-view-specific-001",
     }
     try:
         response = invoke(request)
@@ -430,7 +434,7 @@ def test_zuora_view_rate_plans():
     request = {
         "persona": "ProductManager",
         "message": "Show me the rate plans and charges for 'Solar Plan Premium'.",
-        "conversation_id": "zuora-view-rp-001"
+        "conversation_id": "zuora-view-rp-001",
     }
     try:
         response = invoke(request)
@@ -448,7 +452,7 @@ def test_zuora_update_product_name():
     request = {
         "persona": "ProductManager",
         "message": "I want to update the product 'Solar Plan Basic'. Change the name to 'Solar Plan Premium'.",
-        "conversation_id": "zuora-update-name-001"
+        "conversation_id": "zuora-update-name-001",
     }
     try:
         response = invoke(request)
@@ -466,7 +470,7 @@ def test_zuora_update_product_date():
     request = {
         "persona": "ProductManager",
         "message": "Update the end date of 'Solar Plan Basic' to 2027-12-31.",
-        "conversation_id": "zuora-update-date-001"
+        "conversation_id": "zuora-update-date-001",
     }
     try:
         response = invoke(request)
@@ -484,7 +488,7 @@ def test_zuora_update_charge_price():
     request = {
         "persona": "ProductManager",
         "message": "I need to update the 'Base Charge' price from $1,200 to $1,350 per year.",
-        "conversation_id": "zuora-update-price-001"
+        "conversation_id": "zuora-update-price-001",
     }
     try:
         response = invoke(request)
@@ -502,7 +506,7 @@ def test_zuora_update_charge_model_restricted():
     request = {
         "persona": "ProductManager",
         "message": "I want to change the charge model from Flat Fee Pricing to Tiered Pricing.",
-        "conversation_id": "zuora-update-model-001"
+        "conversation_id": "zuora-update-model-001",
     }
     try:
         response = invoke(request)
@@ -514,6 +518,7 @@ def test_zuora_update_charge_model_restricted():
 # =============================================================================
 # BILLING ARCHITECT TEST SCENARIOS
 # =============================================================================
+
 
 def test_ba_prepaid_drawdown_setup():
     """BA Test: Configure Prepaid with Drawdown for API credits."""
@@ -532,7 +537,7 @@ def test_ba_prepaid_drawdown_setup():
         - Account custom field: TopUpAmount__c
 
         Generate all the configuration payloads and step-by-step instructions.""",
-        "conversation_id": "ba-prepaid-001"
+        "conversation_id": "ba-prepaid-001",
     }
     try:
         response = invoke(request)
@@ -556,7 +561,7 @@ def test_ba_auto_topup_workflow():
         - Send notification when top-up is triggered
 
         Provide the complete workflow configuration and notification rule.""",
-        "conversation_id": "ba-topup-001"
+        "conversation_id": "ba-topup-001",
     }
     try:
         response = invoke(request)
@@ -579,7 +584,7 @@ def test_ba_usage_notification():
         - Include: Account ID, Usage amount, UOM, timestamp
 
         Generate the notification configuration and webhook payload format.""",
-        "conversation_id": "ba-notification-001"
+        "conversation_id": "ba-notification-001",
     }
     try:
         response = invoke(request)
@@ -611,7 +616,7 @@ def test_ba_scheduled_transition():
         2. Scheduled workflow for May 1st
         3. Orders API payload for the transition
         4. Step-by-step implementation guide""",
-        "conversation_id": "ba-transition-001"
+        "conversation_id": "ba-transition-001",
     }
     try:
         response = invoke(request)
@@ -641,7 +646,7 @@ def test_ba_multi_attribute_pricing():
         B) fieldLookup() with custom fields
 
         Recommend the best approach and generate configuration.""",
-        "conversation_id": "ba-map-001"
+        "conversation_id": "ba-map-001",
     }
     try:
         response = invoke(request)
@@ -661,7 +666,7 @@ def test_ba_field_lookup_explanation():
         "message": """The top-up amount differs for each customer. How can Zuora automatically use a customer-specific top-up value?
 
         I need to understand how to use fieldLookup() for this scenario.""",
-        "conversation_id": "ba-fieldlookup-001"
+        "conversation_id": "ba-fieldlookup-001",
     }
     try:
         response = invoke(request)
@@ -692,7 +697,7 @@ def test_ba_complete_prepaid_customer():
         - Complete JSON payloads for each component
         - Implementation sequence with dependencies
         - Validation checklist""",
-        "conversation_id": "ba-complete-prepaid-001"
+        "conversation_id": "ba-complete-prepaid-001",
     }
     try:
         response = invoke(request)
@@ -723,7 +728,7 @@ def test_ba_deposit_customer_workflow():
         - Workflow configuration for May 1st execution
         - Orders API payload for rate plan transition
         - Complete implementation guide""",
-        "conversation_id": "ba-deposit-001"
+        "conversation_id": "ba-deposit-001",
     }
     try:
         response = invoke(request)
@@ -747,7 +752,7 @@ def test_ba_order_transition_payload():
         - Use fieldLookup for deposit amount from Account.DepositAmount__c
 
         Include complete payload with charge overrides.""",
-        "conversation_id": "ba-order-001"
+        "conversation_id": "ba-order-001",
     }
     try:
         response = invoke(request)
@@ -765,7 +770,7 @@ def test_ba_documentation_lookup():
     request = {
         "persona": "BillingArchitect",
         "message": "I need documentation and API references for Prepaid with Drawdown. What are the key concepts and endpoints?",
-        "conversation_id": "ba-docs-001"
+        "conversation_id": "ba-docs-001",
     }
     try:
         response = invoke(request)
@@ -818,7 +823,10 @@ ZUORA_API_TESTS = {
     "z5": ("Update Product Name", test_zuora_update_product_name),
     "z6": ("Update Product Date", test_zuora_update_product_date),
     "z7": ("Update Charge Price", test_zuora_update_charge_price),
-    "z8": ("Update Charge Model (Restricted)", test_zuora_update_charge_model_restricted),
+    "z8": (
+        "Update Charge Model (Restricted)",
+        test_zuora_update_charge_model_restricted,
+    ),
 }
 
 
@@ -856,20 +864,24 @@ def run_interactive():
     """Run tests interactively."""
     while True:
         show_menu()
-        choice = input("\nSelect test (1-16, z1-z8, ba1-ba10, a, z, b, or q): ").strip().lower()
+        choice = (
+            input("\nSelect test (1-16, z1-z8, ba1-ba10, a, z, b, or q): ")
+            .strip()
+            .lower()
+        )
 
-        if choice == 'q':
+        if choice == "q":
             print("Goodbye!")
             break
-        elif choice == 'a':
+        elif choice == "a":
             print("\nRunning ALL PM tests...")
             for key, (name, func) in PM_TESTS.items():
                 func()
-        elif choice == 'z':
+        elif choice == "z":
             print("\nRunning ALL Zuora API tests...")
             for key, (name, func) in ZUORA_API_TESTS.items():
                 func()
-        elif choice == 'b':
+        elif choice == "b":
             print("\nRunning ALL Billing Architect tests...")
             for key, (name, func) in BA_TESTS.items():
                 func()
@@ -898,7 +910,9 @@ if __name__ == "__main__":
                 func()
         else:
             print(f"Unknown test: {test_num}")
-            print(f"Available: {', '.join(ALL_TESTS.keys())}, a (all PM), z (all Zuora), b (all BA)")
+            print(
+                f"Available: {', '.join(ALL_TESTS.keys())}, a (all PM), z (all Zuora), b (all BA)"
+            )
     else:
         # Interactive menu
         run_interactive()

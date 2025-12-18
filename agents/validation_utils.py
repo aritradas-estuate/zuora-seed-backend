@@ -96,7 +96,7 @@ def validate_zuora_id(id_str: str, id_type: str = "ID") -> Tuple[bool, Optional[
         else:
             return (
                 False,
-                f"Invalid object reference format. Use @{{Object[index].Id}} (e.g., '@{{Product[0].Id}}')",
+                "Invalid object reference format. Use @{Object[index].Id} (e.g., '@{Product[0].Id}')",
             )
 
     # Otherwise validate as Zuora ID (alphanumeric, typically 32 chars but can vary)

@@ -5,7 +5,7 @@ Defines required fields and validation rules for different entity types.
 This module is extracted from tools.py for better organization and maintainability.
 """
 
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, cast
 
 
 # ============ Human-Friendly Labels for Technical Zuora Values ============
@@ -468,22 +468,31 @@ def validate_payload(
     api_type_lower = api_type.lower()
 
     # Get schema for this API type
-    schema = REQUIRED_FIELDS.get(api_type_lower)
-    if not schema:
+    schema_raw = REQUIRED_FIELDS.get(api_type_lower)
+    if not schema_raw:
         # Unknown type, skip validation
         return (True, [])
 
-    missing = []
-    descriptions = schema.get("descriptions", {})
+    # Type-safe access to schema components
+    schema: Dict[str, Any] = schema_raw
+    missing: List[Tuple[str, str]] = []
+    descriptions: Dict[str, str] = cast(Dict[str, str], schema.get("descriptions", {}))
+    always_fields: List[str] = cast(List[str], schema.get("always", []))
+    nested_fields_map: Dict[str, List[str]] = cast(
+        Dict[str, List[str]], schema.get("nested", {})
+    )
+    conditional_map: Dict[str, List[str]] = cast(
+        Dict[str, List[str]], schema.get("conditional", {})
+    )
 
     # Check "always" required fields
-    for field in schema.get("always", []):
+    for field in always_fields:
         if not _check_field_exists(payload_data, field):
             desc = descriptions.get(field, field)
             missing.append((field, desc))
 
     # Check "nested" required fields
-    for parent_field, nested_fields in schema.get("nested", {}).items():
+    for parent_field, nested_fields in nested_fields_map.items():
         parent_data = payload_data.get(parent_field, {})
         if not parent_data:
             # Parent is missing, add all nested fields
@@ -500,11 +509,11 @@ def validate_payload(
                     missing.append((full_path, desc))
 
     # Check "conditional" required fields
-    for condition, conditional_fields in schema.get("conditional", {}).items():
+    for condition, conditional_fields in conditional_map.items():
         # Support compound conditions (comma-separated), e.g. "IsPrepaid=true,PrepaidOperationType=topup"
         condition_parts = condition.split(",")
         all_conditions_met = True
-        condition_description_parts = []
+        condition_description_parts: List[str] = []
 
         for cond_part in condition_parts:
             if "=" in cond_part:

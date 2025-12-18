@@ -670,8 +670,8 @@ def create_agent(persona: str) -> Agent:
     with tracer.start_as_current_span("agent.create.settings") as span:
         _initialize_zuora_settings()
         span.set_attribute("settings_loaded", is_settings_loaded())
-        if get_fetch_error():
-            span.set_attribute("settings_error", get_fetch_error())
+        if fetch_error := get_fetch_error():
+            span.set_attribute("settings_error", fetch_error)
 
     # Get environment context to append to system prompts
     environment_context = get_environment_context_for_prompt()

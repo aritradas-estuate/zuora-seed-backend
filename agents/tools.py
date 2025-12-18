@@ -8,7 +8,6 @@ import uuid
 
 import jellyfish
 
-logger = logging.getLogger(__name__)
 from .models import ZuoraApiType
 from .zuora_client import get_zuora_client
 from .validation_schemas import (
@@ -33,6 +32,8 @@ from .validation_utils import (
     check_pwd_uom_compatibility,
     check_pwd_currency_compatibility,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _find_existing_key(obj: Dict[str, Any], key: str) -> Optional[str]:
@@ -1444,7 +1445,7 @@ This may indicate an API limitation or an issue with the charge configuration.
 
 Please try using the Zuora UI to update this charge's price, or contact support."""
 
-    output = f"## ✅ Price Update Payload Generated\n\n"
+    output = "## ✅ Price Update Payload Generated\n\n"
     output += f"**Charge:** {charge_name}\n"
     output += f"**Charge ID:** `{charge_id}`\n"
     output += f"**Charge Model:** {charge_model}\n"
@@ -3301,14 +3302,14 @@ def create_charge(
     if name:
         # Validate name length
         is_valid_len, len_warning = validate_name_length(name, "Charge name")
-        if not is_valid_len:
+        if not is_valid_len and len_warning:
             warnings.append(len_warning)
 
         # Validate name uniqueness within rate plan
         payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
         rp_ref = payload_data.get("ProductRatePlanId", "")
         is_unique, unique_warning = validate_charge_name_unique(name, rp_ref, payloads)
-        if not is_unique:
+        if not is_unique and unique_warning:
             warnings.append(unique_warning)
 
     # Delegate to create_payload which handles placeholders and validation
@@ -4258,7 +4259,7 @@ def generate_pwd_seedspec(
 """
 
     if applied_defaults:
-        output += f"""
+        output += """
 ### Applied Defaults
 
 """
@@ -4266,7 +4267,7 @@ def generate_pwd_seedspec(
             output += f"- ℹ️ {default}\n"
 
     if errors:
-        output += f"""
+        output += """
 ### Errors
 
 """
@@ -4274,7 +4275,7 @@ def generate_pwd_seedspec(
             output += f"- ❌ {error}\n"
 
     if warnings:
-        output += f"""
+        output += """
 ### Warnings
 
 """
@@ -4282,7 +4283,7 @@ def generate_pwd_seedspec(
             output += f"- ⚠️ {warning}\n"
 
     if auto_fixes:
-        output += f"""
+        output += """
 ### Tenant Compatibility Issues
 
 The following issues were detected. Please choose how to resolve:
@@ -4297,13 +4298,13 @@ The following issues were detected. Please choose how to resolve:
             output += f"**Issue {i}: {field.upper()}**\n"
             output += f"- {message}\n"
             if suggestion:
-                output += f"\nOptions:\n"
+                output += "\nOptions:\n"
                 output += f"1. Apply fix: `{original}` → `{suggestion}`\n"
-                output += f"2. Keep original value\n"
-                output += f"3. Specify a different value\n\n"
+                output += "2. Keep original value\n"
+                output += "3. Specify a different value\n\n"
             else:
-                output += f"\nOptions:\n"
-                output += f"1. Select from available values\n"
+                output += "\nOptions:\n"
+                output += "1. Select from available values\n"
                 output += f"2. Create new {field} in tenant settings\n\n"
 
     output += f"""
@@ -4420,7 +4421,7 @@ def validate_pwd_spec(
 
     # Validate drawdown price = 0 rule (informational)
     price_ok, price_msg = validate_pwd_drawdown_price(0)  # Always check for $0
-    if not price_ok:
+    if not price_ok and price_msg:
         warnings.append(price_msg)
 
     # Build result
@@ -4493,6 +4494,7 @@ def generate_pwd_planning_payloads(
         Does NOT add to execution queue - this is advisory only.
     """
     # Get spec from state if not provided
+    resolved_spec: Dict[str, Any]
     if spec is None:
         payloads = tool_context.agent.state.get(ADVISORY_PAYLOADS_STATE_KEY) or []
         pwd_specs = [p for p in payloads if p.get("type") == "pwd_seedspec"]
@@ -4500,24 +4502,23 @@ def generate_pwd_planning_payloads(
             return (
                 "❌ No PWD SeedSpec found. Please run `generate_pwd_seedspec()` first."
             )
-        spec = pwd_specs[-1].get("spec", {})
-        placeholder_map = pwd_specs[-1].get("placeholder_map", {})
+        resolved_spec = pwd_specs[-1].get("spec", {}) or {}
     else:
-        placeholder_map = {}
+        resolved_spec = spec
 
-    product_name = spec.get("product_name", "API Credits Wallet")
-    sku = spec.get("sku", "API-WALLET-100")
-    uom = spec.get("uom", "api_call")
-    currencies = spec.get("currencies", ["USD"])
-    prepaid_plans = spec.get("prepaid_plans", [])
-    topup_packs = spec.get("topup_packs", [])
-    overage = spec.get("overage", {})
+    product_name = resolved_spec.get("product_name", "API Credits Wallet")
+    sku = resolved_spec.get("sku", "API-WALLET-100")
+    uom = resolved_spec.get("uom", "api_call")
+    currencies = resolved_spec.get("currencies", ["USD"])
+    prepaid_plans = resolved_spec.get("prepaid_plans", [])
+    topup_packs = resolved_spec.get("topup_packs", [])
+    overage = resolved_spec.get("overage", {})
 
     # Build Product payload
     product_payload = {
         "Name": product_name,
         "SKU": sku,
-        "Description": spec.get(
+        "Description": resolved_spec.get(
             "description", f"Prepaid wallet product for {uom} credits"
         ),
         "EffectiveStartDate": "{{EFFECTIVE_START_DATE}}",
@@ -5136,20 +5137,19 @@ def generate_notification_rule(
     Returns:
         Complete notification rule configuration with implementation guide.
     """
-    notification_config = {
+    channel_config: Dict[str, Any] = {"type": channel_type}
+    if channel_type in ["Callout", "Webhook"]:
+        channel_config["endpoint"] = endpoint_url or "{{WORKFLOW_CALLOUT_URL}}"
+        channel_config["retryCount"] = 3
+        channel_config["retryInterval"] = 60
+
+    notification_config: Dict[str, Any] = {
         "name": rule_name,
         "description": description,
         "eventType": event_type,
         "active": True,
-        "channel": {"type": channel_type},
+        "channel": channel_config,
     }
-
-    if channel_type in ["Callout", "Webhook"]:
-        notification_config["channel"]["endpoint"] = (
-            endpoint_url or "{{WORKFLOW_CALLOUT_URL}}"
-        )
-        notification_config["channel"]["retryCount"] = 3
-        notification_config["channel"]["retryInterval"] = 60
 
     guide = f"""
 ## Notification Rule Configuration: {rule_name}
@@ -5301,13 +5301,13 @@ def generate_order_payload(
     Returns:
         Complete Orders API payload with implementation guide.
     """
-    order_payload = {
+    order_payload: Dict[str, Any] = {
         "orderDate": effective_date or "{{REPLACE_WITH_DATE}}",
         "existingAccountNumber": "{{REPLACE_WITH_ACCOUNT_NUMBER}}",
         "subscriptions": [],
     }
 
-    subscription_action = {
+    subscription_action: Dict[str, Any] = {
         "subscriptionNumber": subscription_number
         or "{{REPLACE_WITH_SUBSCRIPTION_NUMBER}}",
         "orderActions": [],
@@ -5322,7 +5322,10 @@ def generate_order_payload(
         ]
 
     if action_type == "AddProduct" and add_rate_plan_id:
-        add_action = {
+        add_product_config: Dict[str, Any] = {"productRatePlanId": add_rate_plan_id}
+        if actual_charge_overrides:
+            add_product_config["chargeOverrides"] = [actual_charge_overrides]
+        add_action: Dict[str, Any] = {
             "type": "AddProduct",
             "triggerDates": [
                 {
@@ -5334,10 +5337,8 @@ def generate_order_payload(
                     "triggerDate": effective_date or "{{DATE}}",
                 },
             ],
-            "addProduct": {"productRatePlanId": add_rate_plan_id},
+            "addProduct": add_product_config,
         }
-        if actual_charge_overrides:
-            add_action["addProduct"]["chargeOverrides"] = [actual_charge_overrides]
         subscription_action["orderActions"].append(add_action)
 
     elif action_type == "RemoveProduct" and remove_rate_plan_id:
@@ -5370,7 +5371,14 @@ def generate_order_payload(
                 }
             )
         if add_rate_plan_id:
-            add_action = {
+            add_product_config_transition: Dict[str, Any] = {
+                "productRatePlanId": add_rate_plan_id
+            }
+            if actual_charge_overrides:
+                add_product_config_transition["chargeOverrides"] = [
+                    actual_charge_overrides
+                ]
+            add_action_transition: Dict[str, Any] = {
                 "type": "AddProduct",
                 "triggerDates": [
                     {
@@ -5382,15 +5390,18 @@ def generate_order_payload(
                         "triggerDate": effective_date or "{{DATE}}",
                     },
                 ],
-                "addProduct": {"productRatePlanId": add_rate_plan_id},
+                "addProduct": add_product_config_transition,
             }
-            if actual_charge_overrides:
-                add_action["addProduct"]["chargeOverrides"] = [actual_charge_overrides]
-            subscription_action["orderActions"].append(add_action)
+            subscription_action["orderActions"].append(add_action_transition)
 
     elif action_type == "TopUp":
         # Add prepaid balance via order
-        add_action = {
+        add_product_config_topup: Dict[str, Any] = {
+            "productRatePlanId": add_rate_plan_id or "{{PREPAID_RATE_PLAN_ID}}"
+        }
+        if actual_charge_overrides:
+            add_product_config_topup["chargeOverrides"] = [actual_charge_overrides]
+        add_action_topup: Dict[str, Any] = {
             "type": "AddProduct",
             "triggerDates": [
                 {
@@ -5402,13 +5413,9 @@ def generate_order_payload(
                     "triggerDate": effective_date or "{{DATE}}",
                 },
             ],
-            "addProduct": {
-                "productRatePlanId": add_rate_plan_id or "{{PREPAID_RATE_PLAN_ID}}"
-            },
+            "addProduct": add_product_config_topup,
         }
-        if actual_charge_overrides:
-            add_action["addProduct"]["chargeOverrides"] = [actual_charge_overrides]
-        subscription_action["orderActions"].append(add_action)
+        subscription_action["orderActions"].append(add_action_topup)
 
     order_payload["subscriptions"].append(subscription_action)
 
@@ -6188,7 +6195,7 @@ Generate configurations first, then run validation to check for issues."""
     validation_results = []
 
     for payload in matching:
-        result = {
+        result: Dict[str, Any] = {
             "name": payload.get("name", "Unknown"),
             "type": payload.get("type", "unknown"),
             "status": "Valid",

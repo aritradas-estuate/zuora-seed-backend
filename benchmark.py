@@ -2,13 +2,13 @@
 Performance benchmarking script for Zuora Seed Agent.
 Tests cold vs warm cache performance and generates timing reports.
 """
+
 import time
 import sys
 from agents.zuora_client import get_zuora_client
 from agents.cache import get_cache
 from rich.console import Console
 from rich.table import Table
-from rich import print as rprint
 
 console = Console()
 
@@ -30,9 +30,11 @@ def benchmark_operation(name: str, operation_func, iterations: int = 3):
 
             # Check if result indicates success
             success = (
-                result.get("success") if isinstance(result, dict) else
-                result.get("connected") if isinstance(result, dict) else
-                True
+                result.get("success")
+                if isinstance(result, dict)
+                else result.get("connected")
+                if isinstance(result, dict)
+                else True
             )
 
             status = "[green]✓[/green]" if success else "[red]✗[/red]"
@@ -50,7 +52,9 @@ def benchmark_operation(name: str, operation_func, iterations: int = 3):
         min_time = min(valid_times)
         max_time = max(valid_times)
 
-        console.print(f"  [yellow]Avg: {avg:.0f}ms, Min: {min_time:.0f}ms, Max: {max_time:.0f}ms[/yellow]")
+        console.print(
+            f"  [yellow]Avg: {avg:.0f}ms, Min: {min_time:.0f}ms, Max: {max_time:.0f}ms[/yellow]"
+        )
 
         return {
             "name": name,
@@ -58,23 +62,25 @@ def benchmark_operation(name: str, operation_func, iterations: int = 3):
             "min": min_time,
             "max": max_time,
             "iterations": len(valid_times),
-            "times": valid_times
+            "times": valid_times,
         }
     else:
-        console.print(f"  [red]All iterations failed[/red]")
+        console.print("  [red]All iterations failed[/red]")
         return {
             "name": name,
             "avg": 0,
             "min": 0,
             "max": 0,
             "iterations": 0,
-            "times": []
+            "times": [],
         }
 
 
 def run_benchmarks():
     """Run comprehensive performance benchmarks."""
-    console.print("\n[bold magenta]═══ Zuora Seed Agent Performance Benchmark ═══[/bold magenta]\n")
+    console.print(
+        "\n[bold magenta]═══ Zuora Seed Agent Performance Benchmark ═══[/bold magenta]\n"
+    )
 
     client = get_zuora_client()
     cache = get_cache()
@@ -84,18 +90,14 @@ def run_benchmarks():
     cache.clear()
 
     benchmark_1 = benchmark_operation(
-        "OAuth Connection (Cold)",
-        lambda: client.check_connection(),
-        iterations=3
+        "OAuth Connection (Cold)", lambda: client.check_connection(), iterations=3
     )
 
     # Test 2: Connection & OAuth (warm cache)
     console.print("\n[bold]Phase 2: Warm Cache Performance[/bold]")
 
     benchmark_2 = benchmark_operation(
-        "OAuth Connection (Warm)",
-        lambda: client.check_connection(),
-        iterations=3
+        "OAuth Connection (Warm)", lambda: client.check_connection(), iterations=3
     )
 
     # Test 3: List products (cold cache)
@@ -105,14 +107,14 @@ def run_benchmarks():
     benchmark_3 = benchmark_operation(
         "List Products (Cold)",
         lambda: client.list_all_products(page_size=10),
-        iterations=2
+        iterations=2,
     )
 
     # Test 4: List products (warm cache)
     benchmark_4 = benchmark_operation(
         "List Products (Warm)",
         lambda: client.list_all_products(page_size=10),
-        iterations=3
+        iterations=3,
     )
 
     # Generate summary table
@@ -131,24 +133,32 @@ def run_benchmarks():
             f"{benchmark['avg']:.0f}",
             f"{benchmark['min']:.0f}",
             f"{benchmark['max']:.0f}",
-            str(benchmark["iterations"])
+            str(benchmark["iterations"]),
         )
 
     console.print(table)
 
     # Cache performance comparison
     if benchmark_1["avg"] > 0 and benchmark_2["avg"] > 0:
-        oauth_improvement = ((benchmark_1["avg"] - benchmark_2["avg"]) / benchmark_1["avg"]) * 100
-        console.print(f"\n[bold green]OAuth Cache Improvement: {oauth_improvement:.1f}%[/bold green]")
+        oauth_improvement = (
+            (benchmark_1["avg"] - benchmark_2["avg"]) / benchmark_1["avg"]
+        ) * 100
+        console.print(
+            f"\n[bold green]OAuth Cache Improvement: {oauth_improvement:.1f}%[/bold green]"
+        )
 
     if benchmark_3["avg"] > 0 and benchmark_4["avg"] > 0:
-        api_improvement = ((benchmark_3["avg"] - benchmark_4["avg"]) / benchmark_3["avg"]) * 100
-        console.print(f"[bold green]API Cache Improvement: {api_improvement:.1f}%[/bold green]")
+        api_improvement = (
+            (benchmark_3["avg"] - benchmark_4["avg"]) / benchmark_3["avg"]
+        ) * 100
+        console.print(
+            f"[bold green]API Cache Improvement: {api_improvement:.1f}%[/bold green]"
+        )
 
     # Cache statistics
     cache_stats = cache.stats()
 
-    console.print(f"\n[bold magenta]═══ Cache Statistics ═══[/bold magenta]\n")
+    console.print("\n[bold magenta]═══ Cache Statistics ═══[/bold magenta]\n")
     stats_table = Table(show_header=False)
     stats_table.add_column("Metric", style="cyan")
     stats_table.add_column("Value", style="yellow", justify="right")
@@ -162,7 +172,7 @@ def run_benchmarks():
 
     console.print(stats_table)
 
-    console.print(f"\n[bold green]✓ Benchmark complete![/bold green]\n")
+    console.print("\n[bold green]✓ Benchmark complete![/bold green]\n")
 
 
 if __name__ == "__main__":

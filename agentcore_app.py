@@ -16,9 +16,7 @@ logger = logging.getLogger(__name__)
 # Lazy imports - these are slow due to strands library
 # Only import when actually needed (inside invoke function)
 if TYPE_CHECKING:
-    from agents.zuora_agent import create_agent
-    from agents.models import ChatRequest, ChatResponse, Citation, ZuoraApiPayload
-    from agents.html_formatter import markdown_to_html
+    from agents.models import Citation
 
 app = BedrockAgentCoreApp()
 
@@ -234,7 +232,7 @@ BILLING_ARCHITECT_CITATIONS = [
 ]
 
 
-def generate_mock_citations(persona: str, message: str = "") -> List[dict]:
+def generate_mock_citations(persona: str, message: str = "") -> List["Citation"]:
     """
     Generate mock citations based on persona and message content.
 
@@ -272,13 +270,16 @@ def generate_mock_citations(persona: str, message: str = "") -> List[dict]:
     selected = [c for _, _, c in scored[:3]]
 
     # Return without internal keywords field
+    # Import Citation here to avoid circular imports (lazy import pattern)
+    from agents.models import Citation
+
     return [
-        {
-            "id": c["id"],
-            "title": c["title"],
-            "uri": c["uri"],
-            "url": c["url"],
-        }
+        Citation(
+            id=c["id"],
+            title=c["title"],
+            uri=c["uri"],
+            url=c["url"],
+        )
         for c in selected
     ]
 
@@ -524,7 +525,7 @@ def invoke(payload: dict) -> dict:
 
         return chat_response.model_dump()
 
-    except Exception as e:
+    except Exception:
         # Record failed request
         total_duration_ms = (time.time() - start_time) * 1000
         metrics.record_request(persona, total_duration_ms, success=False)

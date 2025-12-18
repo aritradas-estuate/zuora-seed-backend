@@ -498,7 +498,7 @@ def test_tiered_usage_charge_defaults():
             return None
 
         charge_data = charge_payload.get("payload", {})
-        print(f"\nCharge payload data:")
+        print("\nCharge payload data:")
         print(f"  ChargeType: {charge_data.get('ChargeType')}")
         print(f"  ChargeModel: {charge_data.get('ChargeModel')}")
         print(f"  BillingTiming: {charge_data.get('BillingTiming')}")

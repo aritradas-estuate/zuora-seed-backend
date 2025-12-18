@@ -2,17 +2,19 @@
 TTL-based caching for Zuora API responses.
 Provides in-memory caching with automatic expiration and invalidation.
 """
+
 import time
 import hashlib
 import json
 import threading
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 from dataclasses import dataclass, field
 
 
 @dataclass
 class CacheEntry:
     """A single cache entry with value and expiration."""
+
     value: Any
     expires_at: float
     created_at: float = field(default_factory=time.time)
@@ -56,7 +58,7 @@ class TTLCache:
         method: str,
         endpoint: str,
         params: Optional[Dict] = None,
-        data: Optional[Dict] = None
+        data: Optional[Dict] = None,
     ) -> str:
         """
         Generate a cache key from request components.
@@ -91,7 +93,7 @@ class TTLCache:
         method: str,
         endpoint: str,
         params: Optional[Dict] = None,
-        data: Optional[Dict] = None
+        data: Optional[Dict] = None,
     ) -> Optional[Any]:
         """
         Retrieve a value from the cache.
@@ -131,7 +133,7 @@ class TTLCache:
         value: Any,
         params: Optional[Dict] = None,
         data: Optional[Dict] = None,
-        ttl: Optional[int] = None
+        ttl: Optional[int] = None,
     ) -> None:
         """
         Store a value in the cache.
@@ -152,7 +154,9 @@ class TTLCache:
             self._cache[key] = CacheEntry(value=value, expires_at=expires_at)
             self._stats["sets"] += 1
 
-    def invalidate(self, method: Optional[str] = None, endpoint: Optional[str] = None) -> int:
+    def invalidate(
+        self, method: Optional[str] = None, endpoint: Optional[str] = None
+    ) -> int:
         """
         Invalidate cache entries matching the given pattern.
 
@@ -233,7 +237,8 @@ class TTLCache:
         with self._lock:
             current_time = time.time()
             keys_to_remove = [
-                key for key, entry in self._cache.items()
+                key
+                for key, entry in self._cache.items()
                 if entry.expires_at <= current_time
             ]
 
@@ -253,6 +258,7 @@ def get_cache() -> TTLCache:
     global _cache
     if _cache is None:
         import os
+
         default_ttl = int(os.getenv("ZUORA_API_CACHE_TTL_SECONDS", "300"))
         _cache = TTLCache(default_ttl_seconds=default_ttl)
     return _cache
