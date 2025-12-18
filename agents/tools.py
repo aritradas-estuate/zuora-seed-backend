@@ -33,6 +33,12 @@ from .validation_utils import (
     check_pwd_currency_compatibility,
 )
 
+# Fallback defaults for defensive coding in generate_pm_handoff_prompt
+# These values are used only when currencies/prices lists are unexpectedly empty
+# (which should not happen due to validation, but provides safety)
+DEFAULT_FALLBACK_CURRENCY = "USD"
+DEFAULT_FALLBACK_PRICE = 99.0
+
 logger = logging.getLogger(__name__)
 
 
@@ -5102,6 +5108,10 @@ def generate_solution_options(
     """
     Analyze user's prepaid/wallet use case and generate solution options.
 
+    IMPORTANT: After calling this tool, your response must be ONLY the tool output.
+    DO NOT add any additional text. DO NOT assume the user chose Option 1.
+    Wait for the user to explicitly reply with "Option 1" or "Option 2".
+
     Use this tool when user describes a prepaid, wallet, credits, or balance-based
     billing scenario. It checks tenant capabilities and provides two solution options:
     - Option 1: Native PPDD (Prepaid with Drawdown) - Recommended if available
@@ -5113,7 +5123,8 @@ def generate_solution_options(
 
     Returns:
         Formatted solution options with pros/cons and next step prompt.
-        User should reply with their choice (Option 1 or Option 2).
+        Display this output AS-IS to the user and STOP. Do not continue.
+        Wait for user to reply with their choice (Option 1 or Option 2).
     """
     from .zuora_settings import get_ppdd_capability_status
 
@@ -5135,82 +5146,37 @@ def generate_solution_options(
         else "None configured"
     )
 
-    # Build output
-    output = f"""
-## Understanding Your Request
+    # Build output - compact narrative format (harder to truncate)
+    # Note: Using ASCII characters instead of Unicode emojis to avoid potential
+    # model encoding issues with certain Bedrock models (e.g., Qwen)
+    env_status = "[OK] PPDD is enabled" if ppdd_likely else "[!] PPDD may need setup"
+    recommend_tag = " [RECOMMENDED]" if ppdd_likely else ""
 
-{use_case_description}
+    output = f"""I've analyzed your request for a prepaid wallet solution.
 
-This is a **prepaid wallet** pattern where:
-- Customer pays upfront for credits/units
-- Usage automatically deducts from the prepaid balance
-- Bills show usage consumed, amount deducted, and remaining balance
-- When exhausted: top-up or overage billing applies
+**Your Zuora Environment:** {env_status} ({len(available_uoms)} UOMs: {uom_display} | {len(available_currencies)} currencies: {currency_display})
 
 ---
 
-## Solution Options
+**Option 1: Prepaid with Drawdown (PPDD)**{recommend_tag}
+Customer prepays for credits -> Zuora tracks balance automatically -> Usage deducts from balance -> Invoice shows remaining balance.
+- Automatic real-time balance tracking
+- Clear invoices with remaining balance displayed
+- Built-in rollover, auto-top-up, and overage support
+- Fully supported by Zuora
 
-### {"✅" if ppdd_likely else "⚠️"} Option 1: Prepaid with Drawdown (PPDD) {"— Recommended" if ppdd_likely else "— May require setup"}
+<hr>
 
-Native Zuora feature for prepaid wallet billing.
-
-| Benefit | Description |
-|---------|-------------|
-| Automatic balance tracking | Zuora manages the prepaid balance natively |
-| Clear invoices | Shows usage consumed, amount deducted, remaining balance |
-| Auto top-up support | Workflow triggers when balance falls below threshold |
-| Overage billing | Automatic per-unit billing when balance is exhausted |
-| Rollover support | Unused credits can roll over to next period |
-
-**Prerequisites:**
-- PPDD feature enabled in Zuora tenant (Settings > Billing > Prepaid with Drawdown)
-- Unit of Measure (UOM) configured for your credits
-- {"✅ Your tenant appears ready" if ppdd_likely else "⚠️ Some setup may be required"}
-
-**Tenant Status:**
-- UOMs available: {uom_display}
-- Currencies: {currency_display}
+**Option 2: Standard Workaround**
+Customer pays upfront -> Usage billed separately -> Manual credit memos to offset -> Track balance externally.
+- No automatic deduction (manual credit memos required)
+- Invoice doesn't show remaining balance
+- No native rollover or auto-top-up
+- More complex to manage at scale
 
 ---
 
-### ⚠️ Option 2: Standard Workaround (Credits + Manual Tracking)
-
-Use this **only if PPDD is not enabled** in your tenant.
-
-| Aspect | Description |
-|--------|-------------|
-| Approach | One-time/recurring charge for prepaid amount |
-| Balance tracking | Manual — use custom field or external system |
-| Usage billing | Standard usage charge, offset with credit memos |
-| Invoice clarity | Requires custom reporting |
-
-**Drawbacks:**
-- No automatic balance deduction
-- Manual credit memo application required
-- More complex to manage and report
-- No native rollover or auto top-up
-
----
-
-## Your Tenant Configuration
-
-| Setting | Status |
-|---------|--------|
-| PPDD Capability | {"✅ Likely available" if ppdd_likely else "⚠️ May need setup"} |
-| Units of Measure | {len(available_uoms)} configured |
-| Currencies | {len(available_currencies)} enabled |
-
----
-
-## Next Step
-
-**Which option would you like to proceed with?**
-
-Reply with one of the following:
-- **"Option 1"** or **"PPDD"** — I'll ask for your requirements and generate a ProductManager prompt
-- **"Option 2"** or **"Standard"** — I'll generate a ProductManager prompt for the workaround approach
-- **"Tell me more about PPDD"** — I'll explain how Prepaid with Drawdown works in detail
+Reply with **"Option 1"**, **"Option 2"**, or **"Tell me more about [Option 1 / Option 2 / both]"**
 """
 
     # Store the options in advisory state for reference
@@ -5225,6 +5191,118 @@ Reply with one of the following:
         }
     )
     tool_context.agent.state.set(ADVISORY_PAYLOADS_STATE_KEY, payloads)
+
+    return output
+
+
+@tool(context=True)
+def explain_solution_option(
+    tool_context: ToolContext,
+    option: Literal["1", "2", "both"],
+) -> str:
+    """
+    Provide detailed explanation of a solution option for prepaid/wallet billing.
+
+    Use this tool when the user asks "tell me more about Option 1/2/both" after
+    seeing the initial solution options from generate_solution_options().
+
+    Args:
+        option: Which option to explain - "1" for PPDD, "2" for workaround, "both" for comparison
+
+    Returns:
+        Detailed explanation with how it works, benefits/drawbacks, and invoice examples.
+        After displaying, wait for user to choose Option 1 or Option 2.
+    """
+    from .zuora_settings import get_ppdd_capability_status
+
+    # Check tenant capabilities for context
+    ppdd_status = get_ppdd_capability_status()
+    ppdd_likely = ppdd_status.get("likely_available", True)
+
+    # Option 1: PPDD detailed explanation - compact narrative
+    tenant_status_1 = "✅ Your tenant is ready" if ppdd_likely else "⚠️ May need setup"
+    option_1_explanation = f"""**Option 1: Prepaid with Drawdown (PPDD) — Details**
+
+**How it works:**
+1. Create a product with two charges: Prepaid Charge ($99 for 100 credits) + Drawdown Charge ($0/unit, deducts from balance)
+2. Zuora tracks balance in real-time
+3. Each invoice shows: Credits Used → Deducted from Balance → Remaining Balance
+4. When balance hits zero: overage billing kicks in OR auto-top-up triggers
+
+**Benefits:** Native balance tracking • Audit-ready invoices • Rollover support • Auto-top-up workflows • Scales to unlimited customers • Fully supported by Zuora
+
+**Example Invoice:**
+```
+Credits Used: 45 | Deducted: 45 | Remaining: 55 credits
+Charges: Prepaid Bundle (100 credits): $99.00
+```
+
+**Prerequisites:** PPDD enabled in tenant ({tenant_status_1}), UOM configured"""
+
+    # Option 2: Workaround detailed explanation - compact narrative
+    option_2_explanation = """**Option 2: Standard Workaround — Details**
+
+**How it works:**
+1. Create one-time charge for prepaid amount ($99)
+2. Create usage charge ($1/credit)
+3. Manually apply credit memos to offset usage
+4. Track balance in custom field or external system
+5. Build custom reports for usage vs balance
+
+**Drawbacks:** No automatic deduction • Invoices don't show balance (customers will ask "where's my balance?") • No native rollover • Manual work doesn't scale • Not officially supported by Zuora
+
+**Example Invoice (confusing):**
+```
+Prepaid Purchase: $99.00
+API Usage (45 credits): $45.00
+Credit Memo (offset): -$45.00
+Balance: ??? (calculated externally)
+```
+
+**Why PPDD is preferred:** Eliminates manual work, provides clear invoices, scales without custom code."""
+
+    # Comparison table for "both" - compact version
+    recommend_note = (
+        "✅ Your tenant supports PPDD — **Option 1 is recommended**"
+        if ppdd_likely
+        else "⚠️ Check if PPDD is enabled in your tenant"
+    )
+    comparison_output = f"""**Comparison: Option 1 vs Option 2**
+
+| Aspect | Option 1: PPDD ✅ | Option 2: Workaround |
+|--------|------------------|----------------------|
+| Balance Tracking | Automatic | Manual |
+| Invoice Clarity | Shows balance | Requires calculation |
+| Rollover | Native | Custom logic |
+| Auto-Top-Up | Built-in | Manual/custom |
+| Scalability | Unlimited | Limited |
+| Zuora Support | Fully supported | Not supported |
+
+{recommend_note}
+
+---
+
+{option_1_explanation}
+
+---
+
+{option_2_explanation}"""
+
+    # Build output based on option
+    if option == "1":
+        output = option_1_explanation
+    elif option == "2":
+        output = option_2_explanation
+    else:  # both
+        output = comparison_output
+
+    # Add next step - compact
+    recommend_tag = " (recommended)" if ppdd_likely else ""
+    output += f"""
+
+---
+
+Reply with **"Option 1"**{recommend_tag} or **"Option 2"** to proceed."""
 
     return output
 
@@ -5256,6 +5334,11 @@ def generate_pm_handoff_prompt(
     Creates a complete, formatted prompt that the user can copy and paste
     into a new conversation with ProductManager to create the product structure.
 
+    CRITICAL: After calling this tool, your response MUST include the COMPLETE tool output.
+    The output contains a code block with the prompt - this is what the user needs to copy.
+    DO NOT summarize. DO NOT say "the prompt is ready" without showing the actual prompt.
+    The user cannot copy a prompt they cannot see!
+
     IMPORTANT: Always ask the user for all required values before calling this tool.
     Do not use default values - get product_name, sku, prepaid_quantity, currencies,
     prices, and uom from the user.
@@ -5281,105 +5364,133 @@ def generate_pm_handoff_prompt(
 
     Returns:
         Formatted prompt ready to copy/paste into ProductManager conversation.
+        DISPLAY THIS ENTIRE OUTPUT TO THE USER - do not summarize or truncate!
     """
     # Format prices for display
     price_display = " / ".join(
         [f"{_format_currency(p, c)} {c}" for c, p in prices.items()]
     )
 
+    # Get first currency and price for narrative descriptions
+    # currencies[0] is the user's primary currency (first in their preference list)
+    first_currency = currencies[0] if currencies else DEFAULT_FALLBACK_CURRENCY
+    first_price = prices.get(first_currency, DEFAULT_FALLBACK_PRICE)
+
     if solution_type == "ppdd":
-        # Build the PPDD prompt
+        # Build the detailed PPDD prompt (narrative style matching the example)
         prompt_lines = [
-            "Create a Zuora Product with Prepaid Drawdown:",
+            "Create a Zuora Product with Prepaid Drawdown",
             "",
-            f"**Product:** {product_name} (SKU: {sku})",
+            f'Create a Zuora product called "{product_name}" (SKU: {sku}) that supports {billing_period.lower()}ly prepaid credits with usage-based drawdown.',
             "",
-            f"**Rate Plan:** {prepaid_quantity:,} {uom.title()}s {billing_period}ly",
+            "**Prepaid Credit Charge (Top-Up):**",
+            f'Set up a recurring prepaid charge called "{product_name} – {prepaid_quantity:,} {uom.title()} {billing_period}ly."',
+            f"This charge should bill {_format_currency(first_price, first_currency)} {first_currency} per {billing_period.lower()}, in advance, starting when the contract becomes effective.",
+            "The billing cycle should follow the customer's default billing cycle.",
+            f"This charge represents a prepaid credit top-up that grants {prepaid_quantity:,} {uom}s every {billing_period.lower()}.",
             "",
-            "**Charges to create:**",
-            "",
-            f'1. **Prepaid Charge: "{prepaid_quantity:,} {uom.title()} Top-Up"**',
-            "   - Type: Recurring",
-            "   - Model: Flat Fee",
+            "The charge should:",
+            "- Use flat fee pricing",
+            "- Be marked as a Prepayment charge",
+            "- Have a unit-based commitment",
+            "- Credit Option should be Consumption based",
+            "- Be configured as a top-up prepaid operation",
+            f"- Use {uom.title()}s as the unit of measure",
+            f"- Have a {billing_period.lower()}ly validity period",
         ]
 
-        # Add prices for each currency
-        for currency, price in prices.items():
-            prompt_lines.append(
-                f"   - Price ({currency}): {_format_currency(price, currency)} per {billing_period.lower()}, billed In Advance"
-            )
-
-        prompt_lines.extend(
-            [
-                "   - ChargeFunction: Prepayment",
-                f"   - Prepaid Quantity: {prepaid_quantity:,} {uom}",
-                "   - CommitmentType: UNIT",
-                f"   - ValidityPeriodType: {billing_period.upper()}",
-                "   - CreditOption: ConsumptionBased",
-            ]
-        )
-
-        # Add rollover info if requested
+        # Add rollover configuration
         if include_rollover and rollover_periods:
             prompt_lines.extend(
                 [
-                    "   - IsRollover: true",
-                    f"   - RolloverPeriods: {rollover_periods}",
-                    "   - RolloverApply: ApplyFirst",
+                    f"- Allow rollover of unused credits for {rollover_periods} period(s)",
+                    "- Apply rolled-over credits first before new credits",
                 ]
             )
+        else:
+            prompt_lines.append(
+                "- Not allow rollover of unused credits into the next period"
+            )
 
-        prompt_lines.extend(
-            [
-                "",
-                f'2. **Drawdown Charge: "{uom.title()} Usage"**',
-                "   - Type: Usage",
-                "   - Model: Per Unit",
-                "   - Price: $0 (draws from prepaid balance, not billed separately)",
-                "   - ChargeFunction: Drawdown",
-                f"   - UOM: {uom}",
-                "   - RatingGroup: ByBillingPeriod",
-            ]
-        )
-
-        # Add overage charge if requested
-        if include_overage and overage_prices:
+        # Add multi-currency pricing if applicable
+        # Note: The main narrative above uses the primary currency (first in list).
+        # This section shows all configured currencies for completeness.
+        if len(currencies) > 1:
             prompt_lines.extend(
                 [
                     "",
-                    '3. **Overage Charge: "Overage Usage"**',
-                    "   - Type: Usage",
-                    "   - Model: Per Unit",
+                    "**Multi-Currency Pricing:**",
+                    f"Configure pricing for all {len(currencies)} currencies:",
+                ]
+            )
+            for currency, price in prices.items():
+                prompt_lines.append(
+                    f"- {currency}: {_format_currency(price, currency)} per {billing_period.lower()}"
+                )
+
+        # Drawdown charge section
+        prompt_lines.extend(
+            [
+                "",
+                "**Usage Drawdown Charge:**",
+                f'Add a usage charge named "{uom.title()} Usage – Drawdown."',
+                "This charge should track consumption of the prepaid credits and deduct usage from the available balance.",
+                "",
+                "The usage charge should:",
+                "- Use per-unit usage pricing",
+                "- Be billed on the customer's default billing cycle",
+                "- Start at contract effective date",
+                "- Be rated by billing period",
+                f"- Use {uom.title()}s as the unit of measure",
+                "- Have a price of $0 per unit while prepaid credits are available",
+                "- Be configured as a Drawdown charge",
+                "- Use drawdown as the prepaid operation type",
+                f"- Have a {billing_period.lower()}ly billing period",
+            ]
+        )
+
+        # Add overage information
+        if include_overage and overage_prices:
+            overage_first_price = overage_prices.get(first_currency, 1.0)
+            prompt_lines.append(
+                f"- Include a description indicating that usage first consumes prepaid credits and that overage charges apply after the prepaid balance is exhausted (for example, {_format_currency(overage_first_price, first_currency, decimals=4)} per unit once credits run out)"
+            )
+
+            # Add separate overage charge
+            prompt_lines.extend(
+                [
+                    "",
+                    "**Overage Charge (when prepaid balance exhausted):**",
+                    f'Add a usage charge named "{uom.title()} Overage."',
+                    "This charge should bill for usage that exceeds the prepaid balance.",
+                    "",
+                    "The overage charge should:",
+                    "- Use per-unit usage pricing",
+                    "- Be a Standard charge (NOT a Drawdown charge)",
+                    f"- Use {uom.title()}s as the unit of measure",
                 ]
             )
             for currency, price in overage_prices.items():
                 prompt_lines.append(
-                    f"   - Price ({currency}): {_format_currency(price, currency, decimals=4)} per {uom}"
+                    f"- Price ({currency}): {_format_currency(price, currency, decimals=4)} per {uom}"
                 )
-            prompt_lines.extend(
-                [
-                    "   - ChargeFunction: Standard (NOT Drawdown)",
-                    f"   - UOM: {uom}",
-                    "   - Description: Billed when prepaid balance is exhausted",
-                ]
-            )
 
         # Add top-up pack if requested
         if include_topup_pack and topup_quantity and topup_prices:
-            topup_price_display = " / ".join(
-                [f"{_format_currency(p, c)} {c}" for c, p in topup_prices.items()]
-            )
+            topup_first_price = topup_prices.get(first_currency, 50.0)
             prompt_lines.extend(
                 [
                     "",
-                    "**Additional Rate Plan:** One-Time Top-Up Pack",
+                    "**One-Time Top-Up Pack (Optional Add-On):**",
+                    f'Create an additional rate plan called "Top-Up Pack – {topup_quantity:,} {uom.title()}s"',
+                    "This allows customers to purchase additional credits as a one-time purchase.",
                     "",
-                    f'**Charge: "{topup_quantity:,} {uom.title()} Top-Up Pack"**',
-                    "   - Type: OneTime",
-                    "   - Model: Flat Fee",
-                    f"   - Price: {topup_price_display}",
-                    "   - ChargeFunction: Prepayment",
-                    f"   - Prepaid Quantity: {topup_quantity:,} {uom}",
+                    "The top-up charge should:",
+                    "- Be a OneTime charge",
+                    "- Use flat fee pricing",
+                    f"- Price: {_format_currency(topup_first_price, first_currency)} for {topup_quantity:,} {uom}s",
+                    "- Be marked as a Prepayment charge",
+                    f"- Grant {topup_quantity:,} {uom}s to the prepaid balance",
                 ]
             )
 
@@ -5387,58 +5498,89 @@ def generate_pm_handoff_prompt(
 
     else:  # standard workaround
         prompt_lines = [
-            "Create a Zuora Product for prepaid credits (standard approach without PPDD):",
+            "Create a Zuora Product for Prepaid Credits (Standard Approach)",
             "",
-            f"**Product:** {product_name} (SKU: {sku})",
+            f'Create a Zuora product called "{product_name}" (SKU: {sku}) for prepaid credits using the standard approach (without Prepaid with Drawdown feature).',
             "",
-            f"**Rate Plan:** {prepaid_quantity:,} {uom.title()}s Package",
+            "**Note:** This approach does NOT use Zuora's native PPDD feature. Balance tracking and credit application will require manual processes or custom automation.",
             "",
-            "**Charges to create:**",
+            "**Prepaid Funds Charge:**",
+            f'Set up a recurring charge called "{product_name} – Prepaid Funds" representing the prepaid amount.',
+            f"This charge should bill {_format_currency(first_price, first_currency)} {first_currency} per {billing_period.lower()}, in advance.",
+            f"This represents the prepaid amount the customer pays upfront (equivalent to {prepaid_quantity:,} {uom}s worth of value).",
             "",
-            f'1. **Prepaid Charge: "{uom.title()} Purchase"**',
-            "   - Type: OneTime (or Recurring for auto-renewal)",
-            "   - Model: Flat Fee",
+            "The charge should:",
+            "- Use flat fee pricing",
+            "- Be billed In Advance",
+            f"- Have a {billing_period.lower()}ly billing period",
         ]
 
-        for currency, price in prices.items():
-            prompt_lines.append(
-                f"   - Price ({currency}): {_format_currency(price, currency)}"
+        # Add multi-currency pricing if applicable
+        # Note: The main narrative above uses the primary currency (first in list).
+        # This section shows all configured currencies for completeness.
+        if len(currencies) > 1:
+            prompt_lines.extend(
+                [
+                    "",
+                    "**Multi-Currency Pricing:**",
+                    f"Configure pricing for all {len(currencies)} currencies:",
+                ]
             )
+            for currency, price in prices.items():
+                prompt_lines.append(
+                    f"- {currency}: {_format_currency(price, currency)} per {billing_period.lower()}"
+                )
 
+        # Usage tracking charge
         prompt_lines.extend(
             [
-                f"   - Description: Prepaid {uom} purchase - track balance externally or in custom field",
                 "",
-                f'2. **Usage Charge: "{uom.title()} Usage"**',
-                "   - Type: Usage",
-                "   - Model: Per Unit",
+                "**Usage Tracking Charge:**",
+                f'Add a usage charge named "{uom.title()} Usage."',
+                "This charge tracks consumption but does NOT automatically deduct from prepaid balance.",
+                "Usage is invoiced normally, and credit memos must be applied manually to offset against the prepaid amount.",
+                "",
+                "The usage charge should:",
+                "- Use per-unit usage pricing",
+                f"- Use {uom.title()}s as the unit of measure",
             ]
         )
 
         if overage_prices:
             for currency, price in overage_prices.items():
                 prompt_lines.append(
-                    f"   - Price ({currency}): {_format_currency(price, currency, decimals=4)} per {uom}"
+                    f"- Price ({currency}): {_format_currency(price, currency, decimals=4)} per {uom}"
                 )
         else:
-            prompt_lines.append(f"   - Price: 0.01 per {uom} (adjust as needed)")
+            prompt_lines.append(
+                f"- Price: {_format_currency(0.01, first_currency, decimals=4)} per {uom} (adjust as needed)"
+            )
 
+        # Balance management section
         prompt_lines.extend(
             [
-                f"   - UOM: {uom}",
-                "   - Description: Usage billed normally - apply credit memos to offset against prepaid amount",
                 "",
-                "**Important Notes for Standard Approach:**",
-                "- Create a custom field on Account (e.g., PrepaidBalance__c) to track remaining balance",
-                "- Use credit memos to offset usage charges against the prepaid amount",
-                "- Consider creating a workflow to automate credit memo application",
+                "**Balance Management (Manual Process Required):**",
+                "Since this approach does not use native PPDD, you must:",
+                "",
+                "1. **Track remaining balance** using a custom field on Account (e.g., `PrepaidBalance__c`) or an external system",
+                "2. **Apply credit memos** manually to offset usage charges against the prepaid amount",
+                "3. **Configure automation** (optional) using Zuora Workflows to:",
+                "   - Calculate remaining balance after each invoice",
+                "   - Auto-generate credit memos to apply prepaid funds",
+                "   - Alert when prepaid amount is running low",
+                "4. **Handle exhaustion** by either:",
+                "   - Issuing new invoices for additional usage",
+                "   - Asking customer to top up manually",
             ]
         )
 
         prompt_content = "\n".join(prompt_lines)
 
     # Build the full output
-    output = f"""
+    # NOTE: The [DISPLAY_FULL_OUTPUT] marker instructs the model to show everything
+    output = f"""[DISPLAY_FULL_OUTPUT: Show this entire response to the user. Do NOT summarize.]
+
 ## ProductManager Prompt Generated
 
 Copy the text below and paste it into a new conversation with the **ProductManager** persona:
@@ -5476,6 +5618,35 @@ Copy the text below and paste it into a new conversation with the **ProductManag
 ---
 """
 
+    # Add disadvantages section for Standard workaround
+    if solution_type == "standard":
+        output += """
+### Disadvantages of Standard Approach
+
+| Limitation | Impact |
+|------------|--------|
+| No automatic balance deduction | Manual credit memo application required |
+| Manual balance tracking | Must use custom field or external system |
+| No native rollover | Cannot automatically carry over unused credits |
+| No auto top-up | Cannot trigger automatic replenishment |
+| Complex reporting | Requires custom reporting for balance visibility |
+| Invoice clarity | Invoices don't natively show prepaid deductions |
+
+---
+
+### Why Prepaid with Drawdown (PPDD) is Preferred
+
+If your Zuora tenant has the PPDD feature enabled, it provides:
+- **Automatic** balance tracking and deduction
+- **Native** invoice line items showing usage, deduction, and remaining balance
+- **Built-in** rollover and auto-top-up capabilities
+- **Simplified** operations with no manual credit memos
+
+**Recommendation:** If PPDD is available in your tenant, consider using Option 1 instead for a more streamlined implementation.
+
+---
+"""
+
     # Add auto top-up info if requested
     if include_auto_topup_info and auto_topup_threshold:
         output += f"""
@@ -5501,6 +5672,8 @@ Tell me what to change:
 - "Change prepaid quantity to 50,000"
 - "Include a top-up pack"
 - "Add rollover for 2 periods"
+
+[END_OF_PROMPT_OUTPUT: The above content must be displayed in full to the user.]
 """
 
     # Store the PM handoff prompt in advisory state for reference

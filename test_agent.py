@@ -1,4 +1,5 @@
 import json
+from typing import List
 from agents.zuora_agent import get_default_agent
 from agentcore_app import invoke
 
@@ -11,6 +12,55 @@ def print_response(response: dict):
         print(f"\nPayloads ({len(payloads)}):")
         print(json.dumps(payloads, indent=2))
     print("-" * 60)
+
+
+def assert_response_valid(response: dict) -> bool:
+    """Assert that response is valid (not None/empty and has an answer)."""
+    assert response is not None, "Response should not be None"
+    assert isinstance(response, dict), "Response should be a dict"
+    answer = response.get("answer", "")
+    assert answer, "Response should have a non-empty answer"
+    return True
+
+
+def assert_contains_keywords(
+    response: dict, keywords: List[str], case_sensitive: bool = False
+) -> bool:
+    """Assert that response contains all specified keywords."""
+    answer = response.get("answer", "")
+    check_answer = answer if case_sensitive else answer.lower()
+    missing = []
+    for keyword in keywords:
+        check_keyword = keyword if case_sensitive else keyword.lower()
+        if check_keyword not in check_answer:
+            missing.append(keyword)
+    if missing:
+        print(f"  [WARN] Missing keywords: {missing}")
+        return False
+    return True
+
+
+def assert_not_contains_keywords(
+    response: dict, keywords: List[str], case_sensitive: bool = False
+) -> bool:
+    """Assert that response does NOT contain any of the specified keywords."""
+    answer = response.get("answer", "")
+    check_answer = answer if case_sensitive else answer.lower()
+    found = []
+    for keyword in keywords:
+        check_keyword = keyword if case_sensitive else keyword.lower()
+        if check_keyword in check_answer:
+            found.append(keyword)
+    if found:
+        print(f"  [WARN] Unexpected keywords found: {found}")
+        return False
+    return True
+
+
+def print_assertion_result(passed: bool, test_name: str):
+    """Print assertion result."""
+    status = "PASS" if passed else "FAIL"
+    print(f"\n[{status}] {test_name}")
 
 
 # =============================================================================
@@ -975,8 +1025,364 @@ def test_arch_7_pm_handoff():
 
 
 # =============================================================================
+# BILLING ARCHITECT 4-STAGE FLOW TESTS
+# =============================================================================
+
+
+def test_ba_flow_stage1_initial_request():
+    """BA Flow Stage 1: Initial prepaid request - should show options only."""
+    print("\n" + "=" * 60)
+    print("BA FLOW STAGE 1: Initial Request (Options Only)")
+    print("=" * 60)
+    print("Expected: Show Option 1 (PPDD) and Option 2 (Standard)")
+    print("Expected: Ask 'Which option?' - NOT ask for product details")
+    print("-" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": """Set up a customer where they pay upfront for a pool of value 
+        that can be used over time. As the customer uses the service, the cost is 
+        automatically deducted from this prepaid amount. Each bill should clearly 
+        show how much was used, how much was deducted, and how much prepaid value 
+        remains. If the prepaid amount is fully used, the customer can either add 
+        more funds or be billed for additional usage, based on the agreed terms.""",
+        "conversation_id": "ba-flow-stage1-001",
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+
+        # Assertions
+        passed = True
+        passed &= assert_response_valid(response)
+        passed &= assert_contains_keywords(
+            response, ["option 1", "option 2", "which option"]
+        )
+        # Should NOT have "selected" or ask for product details in Stage 1
+        passed &= assert_not_contains_keywords(
+            response, ["you've selected", "product name", "sku"]
+        )
+        print_assertion_result(passed, "Stage 1: Options Only")
+    except Exception as e:
+        print(f"Error: {e}")
+        print_assertion_result(False, "Stage 1: Options Only")
+
+
+def test_ba_flow_stage2_option_selection():
+    """BA Flow Stage 2: User selects Option 1 - should acknowledge and offer prompt."""
+    print("\n" + "=" * 60)
+    print("BA FLOW STAGE 2: Option Selection")
+    print("=" * 60)
+    print("Expected: Acknowledge 'Option 1: PPDD'")
+    print("Expected: Offer to create PM prompt - NOT ask for product details yet")
+    print("-" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": "Option 1",
+        "conversation_id": "ba-flow-stage2-001",
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+
+        # Assertions
+        passed = True
+        passed &= assert_response_valid(response)
+        # Should acknowledge option selection or offer prompt
+        passed &= assert_contains_keywords(response, ["option 1"])
+        # Should NOT ask for product details yet
+        passed &= assert_not_contains_keywords(response, ["sku", "prepaid quantity"])
+        print_assertion_result(passed, "Stage 2: Option Selection")
+    except Exception as e:
+        print(f"Error: {e}")
+        print_assertion_result(False, "Stage 2: Option Selection")
+
+
+def test_ba_flow_stage2_option2_selection():
+    """BA Flow Stage 2: User selects Option 2 - should acknowledge Standard."""
+    print("\n" + "=" * 60)
+    print("BA FLOW STAGE 2: Option 2 Selection")
+    print("=" * 60)
+    print("Expected: Acknowledge 'Option 2: Standard Workaround'")
+    print("Expected: Offer to create PM prompt - NOT ask for product details yet")
+    print("-" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": "Option 2",
+        "conversation_id": "ba-flow-stage2-opt2-001",
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+
+        # Assertions
+        passed = True
+        passed &= assert_response_valid(response)
+        # Should acknowledge option 2 selection
+        passed &= assert_contains_keywords(response, ["option 2"])
+        # Should NOT ask for product details yet
+        passed &= assert_not_contains_keywords(response, ["sku", "prepaid quantity"])
+        print_assertion_result(passed, "Stage 2: Option 2 Selection")
+    except Exception as e:
+        print(f"Error: {e}")
+        print_assertion_result(False, "Stage 2: Option 2 Selection")
+
+
+def test_ba_flow_stage3_prompt_request():
+    """BA Flow Stage 3: User asks for prompt - should ask for ALL requirements."""
+    print("\n" + "=" * 60)
+    print("BA FLOW STAGE 3: Prompt Request (Gather Requirements)")
+    print("=" * 60)
+    print("Expected: Ask for ALL 10 requirements in ONE message")
+    print("Expected: Product name, SKU, quantity, currencies, prices, UOM, etc.")
+    print("-" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": "Create a prompt for me Option 1",
+        "conversation_id": "ba-flow-stage3-001",
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+
+        # Assertions
+        passed = True
+        passed &= assert_response_valid(response)
+        # Should ask for all requirements
+        passed &= assert_contains_keywords(
+            response, ["product name", "sku", "currencies", "prices"]
+        )
+        print_assertion_result(passed, "Stage 3: Prompt Request")
+    except Exception as e:
+        print(f"Error: {e}")
+        print_assertion_result(False, "Stage 3: Prompt Request")
+
+
+def test_ba_flow_stage3_opt2_prompt_request():
+    """BA Flow Stage 3: User asks for Option 2 prompt."""
+    print("\n" + "=" * 60)
+    print("BA FLOW STAGE 3: Option 2 Prompt Request")
+    print("=" * 60)
+    print("Expected: Ask for ALL requirements for Standard approach")
+    print("-" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": "Create a prompt for me Option 2",
+        "conversation_id": "ba-flow-stage3-opt2-001",
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+
+        # Assertions
+        passed = True
+        passed &= assert_response_valid(response)
+        # Should ask for requirements
+        passed &= assert_contains_keywords(
+            response, ["product name", "sku", "currencies"]
+        )
+        print_assertion_result(passed, "Stage 3: Option 2 Prompt Request")
+    except Exception as e:
+        print(f"Error: {e}")
+        print_assertion_result(False, "Stage 3: Option 2 Prompt Request")
+
+
+def test_ba_flow_stage4_generate_ppdd_prompt():
+    """BA Flow Stage 4: User provides values - should generate detailed PPDD prompt."""
+    print("\n" + "=" * 60)
+    print("BA FLOW STAGE 4: Generate PPDD Prompt")
+    print("=" * 60)
+    print("Expected: Complete ProductManager prompt in code block")
+    print("Expected: Detailed narrative format matching example")
+    print("-" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": """I've chosen Option 1 (PPDD) and want you to generate the ProductManager prompt. Here are my requirements:
+        - Product name: Credit Top-Up Monthly
+        - SKU: CREDIT-10K-MONTHLY
+        - Prepaid quantity: 10,000 credits
+        - Currencies: USD
+        - Prices: $99 USD per month
+        - UOM: credit
+        - Overage: Yes, $1.00 per credit
+        - Rollover: No
+        - Top-up packs: No
+        - Auto-top-up: No
+        
+        Please generate the ProductManager prompt now.""",
+        "conversation_id": "ba-flow-stage4-001",
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+
+        # Assertions
+        passed = True
+        passed &= assert_response_valid(response)
+        # Should contain the product info from user's request
+        passed &= assert_contains_keywords(
+            response, ["credit top-up", "CREDIT-10K-MONTHLY", "prepaid"]
+        )
+        # Should have code block with prompt (markdown code fence or HTML pre/code)
+        answer = response.get("answer", "")
+        has_code_block = (
+            "```" in answer or "<pre><code>" in answer or "<code>" in answer
+        )
+        if not has_code_block:
+            print("  [WARN] Expected code block (``` or <pre><code>) in response")
+            passed = False
+        print_assertion_result(passed, "Stage 4: Generate PPDD Prompt")
+    except Exception as e:
+        print(f"Error: {e}")
+        print_assertion_result(False, "Stage 4: Generate PPDD Prompt")
+
+
+def test_ba_flow_stage4_generate_standard_prompt():
+    """BA Flow Stage 4: Generate Standard workaround prompt with disadvantages."""
+    print("\n" + "=" * 60)
+    print("BA FLOW STAGE 4: Generate Standard Prompt (with disadvantages)")
+    print("=" * 60)
+    print("Expected: Complete PM prompt for Standard approach")
+    print("Expected: Disadvantages table")
+    print("Expected: 'Why PPDD is Preferred' section")
+    print("-" * 60)
+
+    request = {
+        "persona": "BillingArchitect",
+        "message": """I want the Standard approach (Option 2). Here are my details:
+        - Product name: Prepaid Credits Standard
+        - SKU: PREPAID-STD-001
+        - Prepaid quantity: 5,000 credits
+        - Currencies: USD, EUR
+        - Prices: $50 USD, €45 EUR per month
+        - UOM: credit
+        - Overage: Yes, $0.02 per credit
+        - Rollover: No""",
+        "conversation_id": "ba-flow-stage4-standard-001",
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+
+        # Assertions
+        passed = True
+        passed &= assert_response_valid(response)
+        # Should contain the product info
+        passed &= assert_contains_keywords(
+            response, ["prepaid credits standard", "PREPAID-STD-001"]
+        )
+        # Should mention disadvantages for standard approach
+        passed &= assert_contains_keywords(response, ["disadvantage"])
+        print_assertion_result(passed, "Stage 4: Generate Standard Prompt")
+    except Exception as e:
+        print(f"Error: {e}")
+        print_assertion_result(False, "Stage 4: Generate Standard Prompt")
+
+
+def test_ba_flow_full_conversation_ppdd():
+    """BA Flow: Full 4-stage conversation for PPDD (simulated)."""
+    print("\n" + "=" * 60)
+    print("BA FLOW: Full PPDD Conversation (All 4 Stages)")
+    print("=" * 60)
+    print("This test simulates the complete user journey:")
+    print("  Stage 1: Initial request → Options")
+    print("  Stage 2: 'Option 1' → Acknowledge + offer prompt")
+    print("  Stage 3: 'Create a prompt for me Option 1' → Gather requirements")
+    print("  Stage 4: Provide values → Generate prompt")
+    print("-" * 60)
+
+    # Note: In a real test, we'd need conversation history support
+    # This test just verifies Stage 4 with full context
+    request = {
+        "persona": "BillingArchitect",
+        "message": """I've selected Option 1 (PPDD) and want to create the ProductManager prompt.
+
+        Here are all my requirements:
+        - Product name: API Credits Wallet
+        - SKU: API-CREDITS-10K
+        - Prepaid quantity: 10,000 credits
+        - Currencies: USD and EUR
+        - Prices: $99 USD, €90 EUR per month
+        - UOM: credit
+        - Overage billing: Yes at $0.01 USD / €0.009 EUR per credit
+        - Rollover: Yes, for 1 period
+        - Top-up packs: Yes, 5,000 credits for $50 USD / €45 EUR
+        - Auto-top-up: Yes, trigger at 1,000 credits threshold""",
+        "conversation_id": "ba-flow-full-ppdd-001",
+    }
+    try:
+        response = invoke(request)
+        print_response(response)
+
+        # Assertions
+        passed = True
+        passed &= assert_response_valid(response)
+        # Should contain all the key product details
+        passed &= assert_contains_keywords(
+            response, ["api credits wallet", "API-CREDITS-10K", "rollover", "top-up"]
+        )
+        print_assertion_result(passed, "Full PPDD Conversation")
+    except Exception as e:
+        print(f"Error: {e}")
+        print_assertion_result(False, "Full PPDD Conversation")
+
+
+def test_ba_flow_alternate_triggers():
+    """BA Flow: Test alternate trigger phrases for Stage 2 and Stage 3."""
+    print("\n" + "=" * 60)
+    print("BA FLOW: Alternate Trigger Phrases")
+    print("=" * 60)
+    print("Testing various ways users might select options:")
+    print("  - 'go with option 1'")
+    print("  - 'I choose PPDD'")
+    print("  - 'generate the prompt'")
+    print("-" * 60)
+
+    # Test "go with option 1"
+    request = {
+        "persona": "BillingArchitect",
+        "message": "go with option 1",
+        "conversation_id": "ba-flow-alt-001",
+    }
+    try:
+        response = invoke(request)
+        print("\n--- Response to 'go with option 1' ---")
+        print_response(response)
+
+        # Assertions
+        passed = True
+        passed &= assert_response_valid(response)
+        # Should recognize the option selection
+        passed &= assert_contains_keywords(response, ["option 1"])
+        print_assertion_result(passed, "Alternate Triggers")
+    except Exception as e:
+        print(f"Error: {e}")
+        print_assertion_result(False, "Alternate Triggers")
+
+
+# =============================================================================
 # TEST MENU
 # =============================================================================
+
+BA_FLOW_TESTS = {
+    "bf1": ("Stage 1: Initial Request", test_ba_flow_stage1_initial_request),
+    "bf2": ("Stage 2: Option 1 Selection", test_ba_flow_stage2_option_selection),
+    "bf2b": ("Stage 2: Option 2 Selection", test_ba_flow_stage2_option2_selection),
+    "bf3": ("Stage 3: Prompt Request", test_ba_flow_stage3_prompt_request),
+    "bf3b": ("Stage 3: Opt 2 Prompt Request", test_ba_flow_stage3_opt2_prompt_request),
+    "bf4": ("Stage 4: Generate PPDD Prompt", test_ba_flow_stage4_generate_ppdd_prompt),
+    "bf4b": (
+        "Stage 4: Generate Standard Prompt",
+        test_ba_flow_stage4_generate_standard_prompt,
+    ),
+    "bf5": ("Full PPDD Conversation", test_ba_flow_full_conversation_ppdd),
+    "bf6": ("Alternate Triggers", test_ba_flow_alternate_triggers),
+}
 
 ARCH_TESTS = {
     "arch0": ("Solution Selection Flow", test_arch_0_solution_selection),
@@ -1036,7 +1442,7 @@ ZUORA_API_TESTS = {
 }
 
 
-ALL_TESTS = {**PM_TESTS, **ZUORA_API_TESTS, **BA_TESTS, **ARCH_TESTS}
+ALL_TESTS = {**PM_TESTS, **ZUORA_API_TESTS, **BA_TESTS, **ARCH_TESTS, **BA_FLOW_TESTS}
 
 
 def show_menu():
@@ -1062,10 +1468,14 @@ def show_menu():
     print("\n--- ARCHITECT DEMO SCENARIOS (Arch-0 to Arch-7) ---")
     for key in ["arch0", "arch1", "arch2", "arch3", "arch4", "arch5", "arch6", "arch7"]:
         print(f"  {key}. {ARCH_TESTS[key][0]}")
+    print("\n--- BA 4-STAGE FLOW TESTS (bf1-bf6) ---")
+    for key in ["bf1", "bf2", "bf2b", "bf3", "bf3b", "bf4", "bf4b", "bf5", "bf6"]:
+        print(f"  {key}. {BA_FLOW_TESTS[key][0]}")
     print("\n  a. Run ALL PM tests")
     print("  z. Run ALL Zuora API tests")
     print("  b. Run ALL Billing Architect tests")
     print("  arch. Run ALL Architect demo scenarios")
+    print("  bf. Run ALL BA 4-Stage Flow tests")
     print("  q. Quit")
     print("-" * 60)
 
@@ -1076,7 +1486,7 @@ def run_interactive():
         show_menu()
         choice = (
             input(
-                "\nSelect test (1-16, z1-z8, ba1-ba10, arch0-arch7, a, z, b, arch, or q): "
+                "\nSelect test (1-16, z1-z8, ba1-ba10, arch0-arch7, bf1-bf6, a, z, b, arch, bf, or q): "
             )
             .strip()
             .lower()
@@ -1096,6 +1506,10 @@ def run_interactive():
         elif choice == "b":
             print("\nRunning ALL Billing Architect tests...")
             for key, (name, func) in BA_TESTS.items():
+                func()
+        elif choice == "bf":
+            print("\nRunning ALL BA 4-Stage Flow tests...")
+            for key, (name, func) in BA_FLOW_TESTS.items():
                 func()
         elif choice == "arch":
             print("\nRunning ALL Architect demo scenarios...")
@@ -1127,10 +1541,13 @@ if __name__ == "__main__":
         elif test_num == "arch":
             for key, (name, func) in ARCH_TESTS.items():
                 func()
+        elif test_num == "bf":
+            for key, (name, func) in BA_FLOW_TESTS.items():
+                func()
         else:
             print(f"Unknown test: {test_num}")
             print(
-                f"Available: {', '.join(ALL_TESTS.keys())}, a (all PM), z (all Zuora), b (all BA), arch (all Architect)"
+                f"Available: {', '.join(ALL_TESTS.keys())}, a (all PM), z (all Zuora), b (all BA), arch (all Architect), bf (all BA Flow)"
             )
     else:
         # Interactive menu

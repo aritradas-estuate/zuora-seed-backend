@@ -13,6 +13,10 @@ from agents.observability import (
 
 logger = logging.getLogger(__name__)
 
+# Retry configuration for transient Bedrock model errors
+MAX_AGENT_RETRIES = 3
+RETRY_BASE_DELAY_SECONDS = 1.0
+
 # Lazy imports - these are slow due to strands library
 # Only import when actually needed (inside invoke function)
 if TYPE_CHECKING:
@@ -67,6 +71,55 @@ def get_agent_for_persona(persona: str):
 
         _agent_cache[persona] = create_agent(persona)
     return _agent_cache[persona]
+
+
+def invoke_agent_with_retry(agent, prompt: str, session_id: str):
+    """
+    Invoke agent with retry logic for transient Bedrock model errors.
+
+    Implements exponential backoff for ValidationException errors
+    which can occur intermittently with certain models (e.g., Qwen).
+
+    Args:
+        agent: The Strands agent instance
+        prompt: The user prompt to send
+        session_id: The session ID for conversation continuity
+
+    Returns:
+        The agent response
+
+    Raises:
+        Exception: Re-raises the last exception after all retries exhausted
+    """
+    last_exception: Exception | None = None
+
+    for attempt in range(MAX_AGENT_RETRIES):
+        try:
+            return agent(prompt, session_id=session_id)
+        except Exception as e:
+            error_str = str(e)
+            # Check if this is a retryable Bedrock error
+            is_retryable = (
+                "ValidationException" in error_str
+                and "EngineCore encountered an issue" in error_str
+            )
+
+            if is_retryable and attempt < MAX_AGENT_RETRIES - 1:
+                delay = RETRY_BASE_DELAY_SECONDS * (2**attempt)
+                logger.warning(
+                    f"[RETRY] Bedrock model error (attempt {attempt + 1}/{MAX_AGENT_RETRIES}), "
+                    f"retrying in {delay}s: {error_str[:200]}"
+                )
+                time.sleep(delay)
+                last_exception = e
+            else:
+                raise
+
+    # This should never be reached due to the raise in the loop,
+    # but satisfies the type checker
+    if last_exception is not None:
+        raise last_exception
+    raise RuntimeError("Unexpected state in invoke_agent_with_retry")
 
 
 # Citation pools for content-aware selection
@@ -381,9 +434,24 @@ def invoke(payload: dict) -> dict:
             )
             span.set_attribute("bounded_session_id", bounded_session_id)
 
+            # Log request sizes for debugging context window issues
+            prompt_size = len(full_prompt)
+            payloads_size = (
+                sum(len(str(p)) for p in payloads_data) if payloads_data else 0
+            )
+            span.set_attribute("prompt_size_chars", prompt_size)
+            span.set_attribute("payloads_size_chars", payloads_size)
+            span.set_attribute("total_input_size_chars", prompt_size + payloads_size)
+            logger.info(
+                f"[MODEL] Invoking agent - prompt: {prompt_size} chars, "
+                f"payloads: {payloads_size} chars, total: {prompt_size + payloads_size} chars"
+            )
+
             invoke_start = time.time()
             try:
-                response = agent(full_prompt, session_id=bounded_session_id)
+                response = invoke_agent_with_retry(
+                    agent, full_prompt, bounded_session_id
+                )
                 invoke_duration_ms = (time.time() - invoke_start) * 1000
                 span.set_attribute("duration_ms", invoke_duration_ms)
                 span.set_attribute("success", True)
