@@ -5556,8 +5556,6 @@ def generate_pm_handoff_prompt(
     if solution_type == "ppdd":
         # Build the detailed PPDD prompt (narrative style matching the example)
         prompt_lines = [
-            "Create a Zuora Product with Prepaid Drawdown",
-            "",
             f'Create a Zuora product called "{product_name}" (SKU: {sku}) that supports {billing_period.lower()}ly prepaid credits with usage-based drawdown.',
             "",
             f'**Rate Plan:** Create a rate plan called "{product_name} - Prepaid Plan" under this product with the following charges:',
@@ -5764,16 +5762,6 @@ def generate_pm_handoff_prompt(
 
 ## ProductManager Prompt Generated
 
-Copy the text below and paste it into a new conversation with the **ProductManager** persona:
-
----
-
-```
-{prompt_content}
-```
-
----
-
 ### Configuration Summary
 
 | Setting | Value |
@@ -5785,6 +5773,16 @@ Copy the text below and paste it into a new conversation with the **ProductManag
 | Billing | {billing_period}ly |
 | Overage | {"Yes - " + ", ".join([f"{_format_currency(p, c, decimals=4)}/{uom} {c}" for c, p in (overage_prices or {}).items()]) if include_overage and overage_prices else "No"} |
 | Rollover | {"Yes - " + str(rollover_periods) + " periods" if include_rollover and rollover_periods else "No"} |
+
+---
+
+Copy the text below and paste it into a new conversation with the **ProductManager** persona:
+
+---
+
+```
+{prompt_content}
+```
 
 ---
 
