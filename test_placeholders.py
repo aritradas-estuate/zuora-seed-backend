@@ -537,6 +537,166 @@ def test_tiered_usage_charge_defaults():
         return None
 
 
+def test_currency_price_not_top_level():
+    """Test that 'currency' and 'price' are NEVER stored as top-level fields in charge payloads.
+
+    These fields should only exist inside ProductRatePlanChargeTierData.
+    When the agent tries to set them via update_payload(), they should be redirected
+    to the proper tier structure.
+
+    Bug fix verification: Prevents Zuora API errors caused by invalid top-level fields.
+    See: https://developer.zuora.com/v1-api-reference/api/operation/Object_POSTProductRatePlanCharge/
+    """
+    print("\n🧪 Test 9: Currency/Price Not Top-Level (Redirect to Tier Data)")
+
+    # Create a charge that may have placeholder for ProductRatePlanChargeTierData
+    request1 = {
+        "persona": "ProductManager",
+        "message": "Create a product 'Test Product' with a rate plan and a flat fee monthly charge called 'Monthly Base Fee' for $49",
+        "conversation_id": "test-currency-price-001",
+    }
+
+    try:
+        response1 = invoke(request1)
+        print_response("Step 1: Create charge", response1)
+
+        payloads = response1.get("zuora_api_payloads", [])
+
+        # Find the charge payload
+        charge_payload = None
+        for p in payloads:
+            if p.get("zuora_api_type") == "charge_create":
+                charge_payload = p
+                break
+
+        if not charge_payload:
+            print("\n❌ Test failed: No charge payload found")
+            return None
+
+        charge_data = charge_payload.get("payload", {})
+
+        # Verification 1: 'currency' should NOT be a top-level field (lowercase)
+        if "currency" in charge_data:
+            print("\n❌ Test failed: 'currency' is a top-level field (invalid)")
+            print(f"   Value: {charge_data.get('currency')}")
+            return None
+
+        # Verification 2: 'price' should NOT be a top-level field (lowercase)
+        if "price" in charge_data:
+            print("\n❌ Test failed: 'price' is a top-level field (invalid)")
+            print(f"   Value: {charge_data.get('price')}")
+            return None
+
+        # Verification 3: 'prices' should NOT be a top-level field
+        if "prices" in charge_data:
+            print("\n❌ Test failed: 'prices' is a top-level field (invalid)")
+            print(f"   Value: {charge_data.get('prices')}")
+            return None
+
+        # Verification 4: ProductRatePlanChargeTierData should exist with proper structure
+        tier_data = charge_data.get("ProductRatePlanChargeTierData")
+        if tier_data and isinstance(tier_data, dict):
+            tiers = tier_data.get("ProductRatePlanChargeTier", [])
+            if tiers:
+                print("\n✅ ProductRatePlanChargeTierData has proper structure:")
+                for i, tier in enumerate(tiers):
+                    print(
+                        f"   Tier {i + 1}: Currency={tier.get('Currency')}, Price={tier.get('Price')}"
+                    )
+        elif tier_data and "<<PLACEHOLDER" in str(tier_data):
+            print(
+                f"\n⚠️ ProductRatePlanChargeTierData is still a placeholder: {tier_data}"
+            )
+            print("   This is OK if the agent didn't have enough info")
+        else:
+            print(f"\n⚠️ ProductRatePlanChargeTierData: {tier_data}")
+
+        print("\n✅ Test passed: No invalid top-level 'currency' or 'price' fields")
+        return response1
+
+    except Exception as e:
+        print(f"\n❌ Test error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return None
+
+
+def test_update_payload_currency_price_redirect():
+    """Test that update_payload redirects 'currency' and 'price' to tier data.
+
+    When the agent calls update_payload with field_path='currency' or 'price',
+    it should update/create the ProductRatePlanChargeTierData structure,
+    NOT create a top-level field.
+    """
+    print("\n🧪 Test 10: Update Payload Currency/Price Redirect")
+
+    # First, create a minimal charge that has a placeholder for tier data
+    # We'll simulate this by creating a charge without currency
+    from agents.tools import (
+        _handle_direct_currency_or_price_update,
+        INVALID_CHARGE_TOP_LEVEL_FIELDS,
+    )
+
+    # Test 1: INVALID_CHARGE_TOP_LEVEL_FIELDS is defined correctly
+    assert "currency" in INVALID_CHARGE_TOP_LEVEL_FIELDS, "Should include 'currency'"
+    assert "price" in INVALID_CHARGE_TOP_LEVEL_FIELDS, "Should include 'price'"
+    assert "prices" in INVALID_CHARGE_TOP_LEVEL_FIELDS, "Should include 'prices'"
+    print("✅ INVALID_CHARGE_TOP_LEVEL_FIELDS contains: currency, price, prices")
+
+    # Test 2: _handle_direct_currency_or_price_update with placeholder tier data
+    payload_with_placeholder = {
+        "Name": "Test Charge",
+        "ChargeModel": "Flat Fee Pricing",
+        "ProductRatePlanChargeTierData": "<<PLACEHOLDER:ProductRatePlanChargeTierData>>",
+    }
+    payload_entry = {
+        "payload": payload_with_placeholder,
+        "_placeholders": ["ProductRatePlanChargeTierData"],
+    }
+
+    # Set currency first
+    was_handled, field_updated, error = _handle_direct_currency_or_price_update(
+        payload_with_placeholder, payload_entry, "currency", "EUR"
+    )
+    assert was_handled, "Should handle 'currency' field"
+    assert error is None, f"Should not have error: {error}"
+    print(f"✅ Currency update handled: {field_updated}")
+
+    # Set price second - should create tier data
+    was_handled, field_updated, error = _handle_direct_currency_or_price_update(
+        payload_with_placeholder, payload_entry, "price", 99.00
+    )
+    assert was_handled, "Should handle 'price' field"
+    assert error is None, f"Should not have error: {error}"
+    print(f"✅ Price update handled: {field_updated}")
+
+    # Verify tier data was created
+    tier_data = payload_with_placeholder.get("ProductRatePlanChargeTierData")
+    assert isinstance(tier_data, dict), "Should have tier data dict"
+    tiers = tier_data.get("ProductRatePlanChargeTier", [])
+    assert len(tiers) >= 1, "Should have at least one tier"
+    assert tiers[0].get("Currency") == "EUR", "Should have EUR currency"
+    assert tiers[0].get("Price") == 99.00, "Should have 99.00 price"
+    print(f"✅ Tier data created: {tiers}")
+
+    # Verify 'currency' and 'price' are NOT top-level
+    assert "currency" not in payload_with_placeholder, (
+        "Should NOT have 'currency' top-level"
+    )
+    assert "price" not in payload_with_placeholder, "Should NOT have 'price' top-level"
+    print("✅ No invalid top-level fields")
+
+    # Verify placeholder was removed
+    assert "ProductRatePlanChargeTierData" not in payload_entry.get(
+        "_placeholders", []
+    ), "ProductRatePlanChargeTierData should be removed from placeholders"
+    print("✅ Placeholder removed")
+
+    print("\n✅ Test passed: Currency/price redirect to tier data works correctly")
+    return True
+
+
 def run_all_tests():
     """Run all placeholder tests."""
     print("\n" + "=" * 70)
@@ -552,6 +712,8 @@ def run_all_tests():
         ("Case-Insensitive Update", test_update_payload_case_insensitive),
         ("Update by Name (Fuzzy)", test_update_payload_by_name),
         ("Tiered Usage Defaults", test_tiered_usage_charge_defaults),
+        ("Currency/Price Not Top-Level", test_currency_price_not_top_level),
+        ("Currency/Price Redirect", test_update_payload_currency_price_redirect),
     ]
 
     results = []

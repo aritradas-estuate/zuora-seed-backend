@@ -307,6 +307,133 @@ def _resolve_currency_price_update(
     return True, currency, None
 
 
+# Fields that should NEVER appear at the top level of a charge_create payload
+# These must be inside ProductRatePlanChargeTierData instead
+INVALID_CHARGE_TOP_LEVEL_FIELDS = {"currency", "price", "prices"}
+
+
+def _handle_direct_currency_or_price_update(
+    payload: Dict[str, Any],
+    payload_entry: Dict[str, Any],
+    field_path: str,
+    new_value: Any,
+) -> Tuple[bool, Optional[str], Optional[str]]:
+    """
+    Handle direct 'currency' or 'price' field updates by redirecting to tier data.
+
+    When the agent tries to update 'currency' or 'price' directly on a charge_create
+    payload, this function intercepts and redirects the update to the proper
+    ProductRatePlanChargeTierData structure.
+
+    This prevents invalid top-level 'currency' and 'price' fields from being created
+    in the payload, which would cause Zuora API errors.
+
+    Args:
+        payload: The charge_create payload dict
+        payload_entry: The full payload entry (contains _placeholders etc.)
+        field_path: Original field path from user/agent (e.g., "currency", "price")
+        new_value: New value to set
+
+    Returns:
+        Tuple of (was_handled: bool, field_updated: Optional[str], error_msg: Optional[str])
+        - was_handled: True if this was a currency/price update that was handled
+        - field_updated: Description of what was updated (e.g., "Currency", "Price")
+        - error_msg: Error message if something went wrong, None on success
+    """
+    field_lower = field_path.lower()
+
+    if field_lower not in ("currency", "price"):
+        return False, None, None
+
+    tier_data = payload.get("ProductRatePlanChargeTierData")
+
+    if field_lower == "currency":
+        currency_upper = (
+            new_value.upper() if isinstance(new_value, str) else str(new_value).upper()
+        )
+
+        # If tier data exists and has tiers, update all tiers' Currency field
+        if isinstance(tier_data, dict):
+            tiers = tier_data.get("ProductRatePlanChargeTier", [])
+            if tiers:
+                for tier in tiers:
+                    tier["Currency"] = currency_upper
+                logger.info(
+                    f"Updated Currency to {currency_upper} in {len(tiers)} tier(s)"
+                )
+                return True, f"Currency -> {currency_upper}", None
+
+        # If tier data is a placeholder or doesn't exist, store pending currency
+        # This will be used when 'price' is set later
+        payload["_pending_currency"] = currency_upper
+        logger.info(
+            f"Stored pending currency {currency_upper} (tier data not yet available)"
+        )
+        return True, f"Currency -> {currency_upper} (pending)", None
+
+    elif field_lower == "price":
+        # Get pending currency or default to USD
+        pending_currency = payload.pop("_pending_currency", None)
+        currency_to_use = pending_currency or "USD"
+
+        price_value = (
+            float(new_value) if not isinstance(new_value, (int, float)) else new_value
+        )
+
+        # If tier data is placeholder string or doesn't exist, create proper structure
+        if not isinstance(tier_data, dict):
+            payload["ProductRatePlanChargeTierData"] = {
+                "ProductRatePlanChargeTier": [
+                    {"Currency": currency_to_use, "Price": price_value}
+                ]
+            }
+            logger.info(
+                f"Created ProductRatePlanChargeTierData with {currency_to_use} {price_value}"
+            )
+
+            # Remove ProductRatePlanChargeTierData from placeholders list
+            if "_placeholders" in payload_entry:
+                placeholders = payload_entry["_placeholders"]
+                if "ProductRatePlanChargeTierData" in placeholders:
+                    placeholders.remove("ProductRatePlanChargeTierData")
+                    logger.info(
+                        "Removed ProductRatePlanChargeTierData from placeholders"
+                    )
+                # Clean up empty placeholders list
+                if not placeholders:
+                    del payload_entry["_placeholders"]
+
+            return True, f"Price -> {currency_to_use} {price_value}", None
+
+        else:
+            # Tier data exists - update Price in all tiers (or matching currency tier)
+            tiers = tier_data.get("ProductRatePlanChargeTier", [])
+            if tiers:
+                # If we have a pending currency, only update tiers with that currency
+                # Otherwise update all tiers
+                updated_count = 0
+                for tier in tiers:
+                    if pending_currency:
+                        if tier.get("Currency", "").upper() == pending_currency:
+                            tier["Price"] = price_value
+                            updated_count += 1
+                    else:
+                        tier["Price"] = price_value
+                        updated_count += 1
+
+                logger.info(
+                    f"Updated Price to {price_value} in {updated_count} tier(s)"
+                )
+                return True, f"Price -> {price_value}", None
+            else:
+                # Tiers array is empty - add a new tier
+                tiers.append({"Currency": currency_to_use, "Price": price_value})
+                logger.info(f"Added new tier with {currency_to_use} {price_value}")
+                return True, f"Price -> {currency_to_use} {price_value}", None
+
+    return False, None, None
+
+
 def _find_payload_by_name(
     matching: List[Tuple[int, Dict[str, Any]]], name: str
 ) -> Tuple[Optional[Tuple[int, Dict[str, Any]]], List[str]]:
@@ -781,6 +908,42 @@ def update_payload(
             )
             return response
 
+        # SPECIAL HANDLING: Direct 'currency' or 'price' field updates for charge_create payloads
+        # When agent tries to set field_path="currency" or field_path="price", redirect to
+        # ProductRatePlanChargeTierData instead of creating invalid top-level fields.
+        # See: https://developer.zuora.com/v1-api-reference/api/operation/Object_POSTProductRatePlanCharge/
+        was_handled, field_updated, error_msg = _handle_direct_currency_or_price_update(
+            payload, payload_entry, field_path, new_value
+        )
+        if was_handled:
+            if error_msg:
+                return format_error_message("Field update failed", error_msg)
+
+            # Success - update state and return
+            tool_context.agent.state.set(PAYLOADS_STATE_KEY, payloads)
+
+            friendly_type = (
+                api_type.replace("_create", "").replace("_update", "").replace("_", " ")
+            )
+            payload_name_str = payload.get("Name", payload.get("name", "unnamed"))
+
+            response = (
+                f'Updated {field_updated} in {friendly_type} "{payload_name_str}".\n\n'
+            )
+            response += "(Redirected to ProductRatePlanChargeTierData - 'currency' and 'price' are not valid top-level fields)\n\n"
+
+            if payload_entry.get("_placeholders"):
+                remaining = payload_entry["_placeholders"]
+                response += f"Still needs: {', '.join(remaining)}"
+            else:
+                response += "All fields complete - ready to execute."
+
+            logger.info(
+                f"[TOOL DONE] update_payload: redirected {field_path} to tier data "
+                f"in charge '{payload_name_str}'"
+            )
+            return response
+
     # Navigate to the field using dot notation
     parts = field_path.split(".")
     current = payload
@@ -925,6 +1088,20 @@ def create_payload(
         # All required fields present
         complete_payload = payload_data
         placeholder_list = []
+
+    # SANITIZATION: Remove invalid top-level fields from charge_create payloads
+    # 'currency' and 'price' should ONLY exist inside ProductRatePlanChargeTierData
+    # See: https://developer.zuora.com/v1-api-reference/api/operation/Object_POSTProductRatePlanCharge/
+    if api_type.lower() == "charge_create":
+        for invalid_field in INVALID_CHARGE_TOP_LEVEL_FIELDS:
+            # Check for both lowercase and original case
+            for key in list(complete_payload.keys()):
+                if key.lower() == invalid_field.lower():
+                    logger.warning(
+                        f"Removing invalid top-level field '{key}' from charge_create payload. "
+                        f"This field should be inside ProductRatePlanChargeTierData."
+                    )
+                    del complete_payload[key]
 
     # Create the payload entry
     payloads = tool_context.agent.state.get(PAYLOADS_STATE_KEY) or []
@@ -3021,12 +3198,12 @@ def create_charge(
     if description:
         payload_data["Description"] = description
 
-    # Billing period - only applicable for Recurring charges
-    # OneTime and Usage charges do NOT use BillingPeriod
-    if charge_type == "Recurring":
+    # Billing period - applicable for Recurring and Usage charges
+    # OneTime charges do NOT use BillingPeriod
+    if charge_type in ("Recurring", "Usage"):
         if billing_period:
             payload_data["BillingPeriod"] = billing_period
-        # If not provided for Recurring charges, validation will create a placeholder
+        # If not provided, validation will create a placeholder
 
     if uom:
         # Auto-correct UOM to valid tenant UOM
@@ -5383,6 +5560,8 @@ def generate_pm_handoff_prompt(
             "",
             f'Create a Zuora product called "{product_name}" (SKU: {sku}) that supports {billing_period.lower()}ly prepaid credits with usage-based drawdown.',
             "",
+            f'**Rate Plan:** Create a rate plan called "{product_name} - Prepaid Plan" under this product with the following charges:',
+            "",
             "**Prepaid Credit Charge (Top-Up):**",
             f'Set up a recurring prepaid charge called "{product_name} – {prepaid_quantity:,} {uom.title()} {billing_period}ly."',
             f"This charge should bill {_format_currency(first_price, first_currency)} {first_currency} per {billing_period.lower()}, in advance, starting when the contract becomes effective.",
@@ -5503,6 +5682,8 @@ def generate_pm_handoff_prompt(
             f'Create a Zuora product called "{product_name}" (SKU: {sku}) for prepaid credits using the standard approach (without Prepaid with Drawdown feature).',
             "",
             "**Note:** This approach does NOT use Zuora's native PPDD feature. Balance tracking and credit application will require manual processes or custom automation.",
+            "",
+            f'**Rate Plan:** Create a rate plan called "{product_name} - Prepaid Plan" under this product with the following charges:',
             "",
             "**Prepaid Funds Charge:**",
             f'Set up a recurring charge called "{product_name} – Prepaid Funds" representing the prepaid amount.',
@@ -5672,8 +5853,6 @@ Tell me what to change:
 - "Change prepaid quantity to 50,000"
 - "Include a top-up pack"
 - "Add rollover for 2 periods"
-
-[END_OF_PROMPT_OUTPUT: The above content must be displayed in full to the user.]
 """
 
     # Store the PM handoff prompt in advisory state for reference

@@ -132,7 +132,7 @@ REQUIRED_FIELDS = {
         "nested": {},
         "conditional": {
             "ChargeType=Recurring": ["BillingPeriod"],
-            "ChargeType=Usage": ["UOM"],
+            "ChargeType=Usage": ["UOM", "BillingPeriod"],
             "PriceIncreaseOption=SpecificPercentageValue": ["PriceIncreasePercentage"],
             "ChargeModel=Per Unit Pricing": ["DefaultQuantity"],
             "ChargeModel=Volume Pricing": ["DefaultQuantity"],
@@ -160,7 +160,7 @@ REQUIRED_FIELDS = {
             "ChargeModel": "Pricing model: 'Flat Fee Pricing', 'Per Unit Pricing', 'Tiered Pricing', 'Volume Pricing', 'Overage Pricing', 'Tiered with Overage Pricing', 'Discount-Fixed Amount', 'Discount-Percentage', 'Delivery Pricing', 'MultiAttributePricing'",
             "ChargeType": "Charge type: 'OneTime', 'Recurring', or 'Usage'",
             "BillCycleType": "Billing day type: 'DefaultFromCustomer', 'SpecificDayofMonth', 'SubscriptionStartDay', 'ChargeTriggerDay', 'SpecificDayofWeek', 'TermStartDay', 'TermEndDay'",
-            "BillingPeriod": "Billing period (Recurring charges only): 'Month', 'Quarter', 'Annual', 'Semi-Annual', 'Specific Months', 'Specific Weeks', 'Specific Days', 'Subscription Term', 'Week'. Not applicable to OneTime or Usage charges.",
+            "BillingPeriod": "Billing period (Recurring and Usage charges): 'Month', 'Quarter', 'Annual', 'Semi-Annual', 'Specific Months', 'Specific Weeks', 'Specific Days', 'Subscription Term', 'Week'. Not applicable to OneTime charges.",
             "TriggerEvent": "When billing starts: 'ContractEffective', 'ServiceActivation', 'CustomerAcceptance'",
             "ProductRatePlanChargeTierData": "Container for pricing tiers with currency and price",
             # Pricing Fields
@@ -244,7 +244,7 @@ REQUIRED_FIELDS = {
         "nested": {},
         "conditional": {
             "ChargeType=Recurring": ["BillingPeriod"],
-            "ChargeType=Usage": ["UOM"],
+            "ChargeType=Usage": ["UOM", "BillingPeriod"],
             "PriceIncreaseOption=SpecificPercentageValue": ["PriceIncreasePercentage"],
             "ChargeModel=Per Unit Pricing": ["DefaultQuantity"],
             "ChargeModel=Volume Pricing": ["DefaultQuantity"],
@@ -274,7 +274,7 @@ REQUIRED_FIELDS = {
             "ChargeModel": "Pricing model: 'Flat Fee Pricing', 'Per Unit Pricing', 'Tiered Pricing', 'Volume Pricing', 'Overage Pricing', 'Tiered with Overage Pricing', 'Discount-Fixed Amount', 'Discount-Percentage', 'Delivery Pricing', 'MultiAttributePricing'",
             "ChargeType": "Charge type: 'OneTime', 'Recurring', or 'Usage'",
             "BillCycleType": "Billing day type: 'DefaultFromCustomer', 'SpecificDayofMonth', 'SubscriptionStartDay', 'ChargeTriggerDay', 'SpecificDayofWeek', 'TermStartDay', 'TermEndDay'",
-            "BillingPeriod": "Billing period: 'Month', 'Quarter', 'Annual', 'Semi-Annual', 'Specific Months', 'Specific Weeks', 'Specific Days', 'Subscription Term', 'Week'. Required for Recurring charges and Drawdown (Usage) charges.",
+            "BillingPeriod": "Billing period: 'Month', 'Quarter', 'Annual', 'Semi-Annual', 'Specific Months', 'Specific Weeks', 'Specific Days', 'Subscription Term', 'Week'. Required for Recurring and Usage charges.",
             "TriggerEvent": "When billing starts: 'ContractEffective', 'ServiceActivation', 'CustomerAcceptance'",
             "ProductRatePlanChargeTierData": "Container for pricing tiers with currency and price",
             # Pricing Fields

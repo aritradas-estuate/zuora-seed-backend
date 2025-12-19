@@ -44,11 +44,11 @@ def _restore_code_blocks(text: str, code_blocks: List[Tuple[str, str]]) -> str:
         placeholder = f"__CODE_BLOCK_{i}__"
         escaped_code = html_escape(code.strip())
         if lang:
-            html_block = (
-                f'<pre><code class="language-{lang}">{escaped_code}</code></pre>'
-            )
+            html_block = f'<pre style="overflow-x: auto;"><code class="language-{lang}">{escaped_code}</code></pre>'
         else:
-            html_block = f"<pre><code>{escaped_code}</code></pre>"
+            html_block = (
+                f'<pre style="overflow-x: auto;"><code>{escaped_code}</code></pre>'
+            )
         text = text.replace(placeholder, html_block)
     return text
 

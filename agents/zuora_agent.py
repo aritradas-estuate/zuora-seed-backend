@@ -68,15 +68,28 @@ STAGE_3_REQUIREMENTS_QUESTIONS = """1. **Product name** - What should the produc
 4. **Currencies** - Which currencies? (e.g., USD, EUR)
 5. **Prices** - Price per prepaid bundle in each currency? (e.g., USD: $99, EUR: €90)
 6. **Unit of Measure (UOM)** - What are the credits called? (e.g., credit, api_call, message)
-7. **Overage billing?** - Should customers be billed for usage beyond prepaid balance?
-   - If yes, what rate per unit in each currency?
-   - If no, usage stops when balance hits zero
-8. **Rollover?** - Should unused credits roll over to the next period?
+7. **Rollover?** - Should unused credits roll over to the next period?
    - If yes, how many periods can they roll over?
-9. **Top-up packs?** (Optional) - One-time packs customers can buy to add more credits?
+8. **Top-up packs?** (Optional) - One-time packs customers can buy to add more credits?
    - If yes, quantity and price per currency?
-10. **Auto-top-up?** (Optional) - Automatically add credits when balance drops below threshold?
-    - If yes, what threshold, quantity, and price?"""
+9. **Auto-top-up?** (Optional) - Automatically add credits when balance drops below threshold?
+   - If yes, what threshold, quantity, and price?
+
+---
+
+**Sample Answers** (copy, edit, and send):
+
+```
+product_name = API Credit Bundle
+sku = API-CREDITS-100
+prepaid_quantity = 1000
+currencies = USD
+prices = USD: $99
+uom = credit
+rollover = No
+topup_packs = No
+auto_topup = No
+```"""
 
 
 # ============ Settings Initialization ============
@@ -268,6 +281,24 @@ Failure to pass pricing parameters will result in <<PLACEHOLDER:ProductRatePlanC
 | Overage Pricing | `included_units=<count>`, `overage_price=<amount>`, `uom="<unit>"`, `currency="<code>"` |
 | Tiered Pricing | `tiers=[{...}]`, `uom="<unit>"`, `currency="<code>"` |
 | Volume Pricing | `tiers=[{...}]`, `uom="<unit>"`, `currency="<code>"` |
+
+### ⚠️ CRITICAL: ALWAYS pass the currency parameter!
+The `currency` parameter is MANDATORY when calling create_charge() with pricing.
+Without it, ProductRatePlanChargeTierData cannot be generated and you'll get placeholder errors.
+
+**WRONG** (missing currency - will create placeholder error):
+```
+create_charge(name="Fee", charge_type="Recurring", charge_model="Flat Fee Pricing", price=49)
+```
+
+**CORRECT** (currency included - proper tier data generated):
+```
+create_charge(name="Fee", charge_type="Recurring", charge_model="Flat Fee Pricing", price=49, currency="USD")
+```
+
+Note: 'currency' and 'price' are NOT valid top-level fields in Zuora's API.
+They are tool parameters that get converted to ProductRatePlanChargeTierData internally.
+NEVER use update_payload() to set 'currency' or 'price' directly - always pass them to create_charge().
 
 ### Example Tool Calls - FOLLOW EXACTLY:
 
